@@ -1,0 +1,45 @@
+schema_version: 1
+task_set:
+- MVP-CORE-001
+- MVP-CORE-002
+- MVP-CORE-003
+- MVP-CORE-004
+- MVP-CORE-005
+- MVP-CORE-006
+- MVP-CORE-007
+workflow: chatgpt-direct-reference
+model: GPT-5.6 Sol
+started_from_commit: null
+outcome:
+  result: PASS
+  independent_review: null
+efficiency:
+  elapsed_seconds:
+    value: null
+    quality: UNAVAILABLE
+  model_calls:
+    value: null
+    quality: UNAVAILABLE
+  input_tokens:
+    value: null
+    quality: UNAVAILABLE
+  output_tokens:
+    value: null
+    quality: UNAVAILABLE
+  provider_cost:
+    value: null
+    quality: UNAVAILABLE
+  human_interventions:
+    value: 0
+    quality: MEASURED
+  fix_cycles:
+    value: 1
+    quality: MEASURED
+    note: External evaluator packaging identity was fixed; reference product code
+      itself did not require a behavioral repair.
+validation:
+  visible_core_build: PASS
+  blackbox_first_attempt: PASS
+  blackbox_tests: 17
+notes: Reference arm is primarily behavioral/code-quality reference; ChatGPT subscription
+  execution cost is not a measured API charge.

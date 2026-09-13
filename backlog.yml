@@ -1,0 +1,815 @@
+schema_version: 1
+product: ScreenSwap
+scope: macOS MVP - exactly two active displays
+rules:
+  canonical_task_source: true
+  one_task_per_cgaw_run: true
+  complete_dependencies_before_start: true
+  do_not_implement_later_tasks: true
+  deferred_not_mvp:
+  - 3+ display behavior
+  - display locking
+  - right-click actions
+  - middle-click actions
+  - scroll-wheel actions
+  - Windows support
+tasks:
+- id: MVP-CORE-001
+  title: Add normalized window geometry type and two-display mapping engine skeleton
+  group: core
+  status: ready
+  depends_on: []
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Tests/ScreenSwapCoreTests/**
+  acceptance:
+  - Introduce a normalized geometry representation for x, y, width and height.
+  - Introduce WindowMappingEngine public API for exactly two DisplaySnapshot values.
+  - No AppKit, Accessibility or menu-bar logic is added.
+  - Add unit tests for API construction and deterministic empty-window behavior.
+  validation:
+  - swift test
+- id: MVP-CORE-002
+  title: Normalize a window frame against a source visible frame
+  group: core
+  status: blocked
+  depends_on:
+  - MVP-CORE-001
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Tests/ScreenSwapCoreTests/**
+  acceptance:
+  - Convert CGRect window geometry to normalized x/y/width/height using source visibleFrame.
+  - Add tests for equal-size, offset-origin and non-zero menu/dock insets.
+  - No destination mapping yet.
+  validation:
+  - swift test
+- id: MVP-CORE-003
+  title: Project normalized window geometry onto a destination visible frame
+  group: core
+  status: blocked
+  depends_on:
+  - MVP-CORE-002
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Tests/ScreenSwapCoreTests/**
+  acceptance:
+  - Project normalized geometry to destination visibleFrame.
+  - Add resolution and aspect-ratio mismatch tests.
+  - Do not clamp yet.
+  validation:
+  - swift test
+- id: MVP-CORE-004
+  title: Clamp projected window frames to destination visible frame
+  group: core
+  status: blocked
+  depends_on:
+  - MVP-CORE-003
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Tests/ScreenSwapCoreTests/**
+  acceptance:
+  - Clamp destination window origin and size so the resulting frame remains usable.
+  - Cover partially off-screen inputs and oversized projected outputs.
+  - Do not add OS-specific minimum window sizes.
+  validation:
+  - swift test
+- id: MVP-CORE-005
+  title: Assign a spanning window to the display containing its center point
+  group: core
+  status: blocked
+  depends_on:
+  - MVP-CORE-001
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Tests/ScreenSwapCoreTests/**
+  acceptance:
+  - Add deterministic display assignment by window center point.
+  - Test a window fully on each display and a window spanning both displays.
+  - Define deterministic tie behavior on an exact boundary.
+  validation:
+  - swift test
+- id: MVP-CORE-006
+  title: Generate a complete immutable A-to-B and B-to-A move plan
+  group: core
+  status: blocked
+  depends_on:
+  - MVP-CORE-004
+  - MVP-CORE-005
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Tests/ScreenSwapCoreTests/**
+  acceptance:
+  - Generate WindowMove values for all provided eligible windows.
+  - A windows map only to B and B windows map only to A.
+  - Input snapshots remain unchanged.
+  - Cover mixed windows from both displays in one test.
+  validation:
+  - swift test
+- id: MVP-CORE-007
+  title: Keep windows spanning both displays in place
+  group: core
+  status: blocked
+  depends_on:
+  - MVP-CORE-005
+  - MVP-CORE-006
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Tests/ScreenSwapCoreTests/**
+  acceptance:
+  - A window with positive-area intersection with both display frames is treated as spanning.
+  - A spanning window is omitted from the swap move plan and therefore is neither moved nor resized.
+  - A window that only touches a display boundary is not treated as spanning.
+  - Other non-spanning windows in the same input are still planned normally.
+  - Spanning detection uses display frame geometry, not visibleFrame geometry.
+  validation:
+  - swift test
+- id: MVP-DISPLAY-001
+  title: Introduce DisplayProviding protocol and NSScreen-backed display adapter
+  group: display
+  status: blocked
+  depends_on:
+  - MVP-CORE-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Create a display provider abstraction.
+  - Create macOS adapter that reads active NSScreen instances.
+  - Convert each screen into DisplaySnapshot.
+  - No display-count policy yet.
+  validation:
+  - swift test
+  - swift build
+- id: MVP-DISPLAY-002
+  title: Resolve stable display IDs for discovered NSScreen values
+  group: display
+  status: blocked
+  depends_on:
+  - MVP-DISPLAY-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Populate DisplaySnapshot.id from the screen's CGDirectDisplayID.
+  - Do not use array index as a persistent display identifier.
+  - Build succeeds.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-DISPLAY-003
+  title: Add exactly-two-display validation result
+  group: display
+  status: blocked
+  depends_on:
+  - MVP-DISPLAY-002
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Represent supported two-display state separately from unsupported display counts.
+  - 0, 1 and 3+ displays are rejected deterministically.
+  - No 3+ display fallback behavior is introduced.
+  validation:
+  - swift test
+- id: MVP-AX-001
+  title: Add Accessibility trust-check service
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-DISPLAY-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Add a service that reports whether the process is trusted for Accessibility.
+  - Checking trust does not automatically prompt.
+  - No window enumeration yet.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-002
+  title: Add explicit Accessibility permission prompt action
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Add an explicit method that requests/presents the system Accessibility prompt.
+  - Prompting is never triggered from pure core code.
+  - Build succeeds.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-003
+  title: Introduce accessibility window provider and enumerate app windows
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-001
+  - MVP-CORE-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Introduce WindowProviding abstraction.
+  - Enumerate candidate windows using macOS Accessibility APIs.
+  - Capture process ID and current frame.
+  - Do not filter minimized/transient windows yet.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-004
+  title: Read minimized state and exclude minimized windows
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Read minimized state where available.
+  - Exclude minimized windows from eligible snapshots.
+  - Failure to read one window does not abort enumeration of all windows.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-005
+  title: Exclude non-movable windows
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Determine whether position can be set.
+  - Exclude windows that cannot be moved.
+  - Do not require resizability yet.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-006
+  title: Mark non-resizable windows for position-only handling
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-003
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Represent whether an eligible window supports resizing.
+  - Non-resizable movable windows remain eligible for position movement.
+  - No resize is attempted for those windows.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-007
+  title: Exclude transient/sheet/non-standard window roles from MVP
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Filter obvious sheets, dialogs, popovers or unsupported roles/subroles.
+  - Normal document/browser/terminal windows remain eligible.
+  - Filtering failures are isolated per window.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-008
+  title: Assign each eligible AX window snapshot to a source display
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-003
+  - MVP-CORE-005
+  - MVP-DISPLAY-002
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Sources/ScreenSwapCore/**
+  - Tests/**
+  acceptance:
+  - Use the core center-point assignment rule.
+  - Populate sourceDisplayID for each captured WindowSnapshot.
+  - No windows are moved in this task.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-009
+  title: Add window position apply operation
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Add API to apply a destination origin to one AX window.
+  - Return a structured success/failure result.
+  - No multi-window coordinator yet.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-AX-010
+  title: Add window size apply operation
+  group: accessibility
+  status: blocked
+  depends_on:
+  - MVP-AX-003
+  - MVP-AX-006
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Add API to apply a destination size to one resizable AX window.
+  - Skip resize cleanly for position-only windows.
+  - Return a structured success/failure result.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-FLOW-001
+  title: Introduce SwapCoordinator with injected dependencies
+  group: flow
+  status: blocked
+  depends_on:
+  - MVP-DISPLAY-003
+  - MVP-AX-001
+  - MVP-CORE-006
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Coordinator depends on abstractions for displays, permission, windows and mapping.
+  - No direct NSStatusItem ownership.
+  - Add unit-test fakes for coordinator dependencies.
+  validation:
+  - swift test
+- id: MVP-FLOW-002
+  title: Make coordinator reject swap when Accessibility permission is missing
+  group: flow
+  status: blocked
+  depends_on:
+  - MVP-FLOW-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Coordinator returns a permission-required result.
+  - No display/window enumeration occurs after permission rejection.
+  - Unit test verifies call order.
+  validation:
+  - swift test
+- id: MVP-FLOW-003
+  title: Make coordinator reject swap unless exactly two displays are active
+  group: flow
+  status: blocked
+  depends_on:
+  - MVP-FLOW-001
+  - MVP-DISPLAY-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Coordinator returns unsupported-display-count result for 0, 1 and 3+.
+  - No window mutation occurs in unsupported states.
+  - Unit tests cover each count.
+  validation:
+  - swift test
+- id: MVP-FLOW-004
+  title: Snapshot all eligible windows before creating a move plan
+  group: flow
+  status: blocked
+  depends_on:
+  - MVP-FLOW-001
+  - MVP-AX-008
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Coordinator obtains one complete immutable window snapshot collection.
+  - No window apply operation is called during snapshot capture.
+  - Unit test proves no interleaved mutation.
+  validation:
+  - swift test
+- id: MVP-FLOW-005
+  title: Create move plan from the complete snapshot before applying changes
+  group: flow
+  status: blocked
+  depends_on:
+  - MVP-FLOW-004
+  - MVP-CORE-006
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Coordinator requests exactly one complete move plan.
+  - No AX mutation occurs before the plan exists.
+  - Unit test verifies operation ordering.
+  validation:
+  - swift test
+- id: MVP-FLOW-006
+  title: Apply the complete two-display move plan
+  group: flow
+  status: blocked
+  depends_on:
+  - MVP-FLOW-005
+  - MVP-AX-009
+  - MVP-AX-010
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Apply planned position to each window.
+  - Apply planned size only when resizable.
+  - One failed window does not prevent attempts on remaining windows.
+  - Return a summary of succeeded and failed moves.
+  validation:
+  - swift test
+  - swift build
+- id: MVP-FLOW-007
+  title: Store pre-swap window snapshots in memory for future undo architecture
+  group: flow
+  status: blocked
+  depends_on:
+  - MVP-FLOW-004
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Store only the latest pre-swap snapshot in memory.
+  - No Undo UI or public action is added.
+  - A new successful snapshot replaces the previous one.
+  validation:
+  - swift test
+- id: MVP-UI-001
+  title: Extract menu-bar icon construction from StatusBarController
+  group: ui
+  status: blocked
+  depends_on: []
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Status-bar icon construction has a dedicated component or helper.
+  - Idle icon remains monochrome/template-compatible.
+  - Click behavior remains unchanged.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-UI-002
+  title: Add pointer enter and exit detection for the menu-bar icon
+  group: ui
+  status: blocked
+  depends_on:
+  - MVP-UI-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Detect hover enter and exit over the status item.
+  - Hover does not trigger a swap.
+  - No animation yet.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-UI-003
+  title: Add IconAnimationController state model
+  group: ui
+  status: blocked
+  depends_on:
+  - MVP-UI-002
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Represent idle, hoverSwap and executingSwap states.
+  - Animation state logic is separated from SwapCoordinator.
+  - State transitions can be unit tested without moving windows.
+  validation:
+  - swift test
+- id: MVP-UI-004
+  title: Implement one-shot hover swap animation
+  group: ui
+  status: blocked
+  depends_on:
+  - MVP-UI-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Hover plays a short visual exchange animation once.
+  - Animation does not loop while the pointer remains hovering.
+  - Mouse exit settles to idle.
+  - Animation never calls SwapCoordinator.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-UI-005
+  title: Respect Reduce Motion for menu-bar animation
+  group: ui
+  status: blocked
+  depends_on:
+  - MVP-UI-004
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Detect reduced-motion accessibility preference.
+  - Use a non-motion visual state change when reduced motion is enabled.
+  - Normal hover remains one-shot when motion is allowed.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-UI-006
+  title: Wire left-click status item action to SwapCoordinator
+  group: ui
+  status: blocked
+  depends_on:
+  - MVP-FLOW-006
+  - MVP-UI-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - One left click requests exactly one swap.
+  - During execution the icon enters executingSwap state.
+  - Completion returns icon to idle.
+  - No right-click, middle-click or scroll behavior is added.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-UI-007
+  title: Show concise unsupported-display feedback
+  group: ui
+  status: blocked
+  depends_on:
+  - MVP-UI-006
+  - MVP-FLOW-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - When display count is not exactly two, expose concise user feedback.
+  - Do not present any 3+ monitor routing choice.
+  - Feedback does not steal focus unnecessarily.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-UI-008
+  title: Show concise Accessibility-required feedback
+  group: ui
+  status: blocked
+  depends_on:
+  - MVP-UI-006
+  - MVP-FLOW-002
+  - MVP-AX-002
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Missing Accessibility permission produces a clear action or instruction.
+  - User can explicitly trigger the system permission prompt.
+  - Normal clicks do not repeatedly spam system prompts.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-HOTKEY-001
+  title: Introduce global hotkey service abstraction
+  group: hotkey
+  status: blocked
+  depends_on:
+  - MVP-FLOW-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Introduce HotKeyService abstraction with register/unregister behavior.
+  - No user configuration UI yet.
+  - Hotkey service does not own swap logic.
+  validation:
+  - swift test
+  - swift build
+- id: MVP-HOTKEY-002
+  title: Register one default global shortcut
+  group: hotkey
+  status: blocked
+  depends_on:
+  - MVP-HOTKEY-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Register one documented default shortcut.
+  - Registration failure is handled without crashing.
+  - Do not add third-party dependency unless an Apple API cannot satisfy the task.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-HOTKEY-003
+  title: Wire the global shortcut to the same SwapCoordinator action as left click
+  group: hotkey
+  status: blocked
+  depends_on:
+  - MVP-HOTKEY-002
+  - MVP-FLOW-006
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Shortcut invokes exactly the same coordinator entry point as left click.
+  - No duplicate swap implementation exists.
+  - Concurrent duplicate triggers are safely rejected or serialized.
+  validation:
+  - swift test
+  - swift build
+- id: MVP-SETTINGS-001
+  title: Add lightweight settings model for shortcut and launch-at-login preferences
+  group: settings
+  status: blocked
+  depends_on:
+  - MVP-HOTKEY-002
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Persist shortcut preference representation.
+  - Persist launch-at-login boolean.
+  - No settings window yet.
+  validation:
+  - swift test
+  - swift build
+- id: MVP-SETTINGS-002
+  title: Add minimal settings window shell
+  group: settings
+  status: blocked
+  depends_on:
+  - MVP-SETTINGS-001
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Provide minimal native settings surface.
+  - Show shortcut, launch-at-login and Accessibility status sections.
+  - No deferred interaction features are shown.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-SETTINGS-003
+  title: Make shortcut configurable from settings
+  group: settings
+  status: blocked
+  depends_on:
+  - MVP-SETTINGS-002
+  - MVP-HOTKEY-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - User can replace the default shortcut.
+  - Old registration is removed before new registration becomes active.
+  - Invalid/conflicting registration is reported.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-SETTINGS-004
+  title: Implement launch-at-login setting
+  group: settings
+  status: blocked
+  depends_on:
+  - MVP-SETTINGS-002
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Launch-at-login toggle is backed by the current Apple ServiceManagement API.
+  - Failure state is surfaced without crashing.
+  - No external helper app is introduced unless required.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-SETTINGS-005
+  title: Add Accessibility onboarding state to settings
+  group: settings
+  status: blocked
+  depends_on:
+  - MVP-SETTINGS-002
+  - MVP-AX-002
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Display current Accessibility trust state.
+  - Provide an explicit Grant/Open action.
+  - Do not repeatedly prompt automatically.
+  validation:
+  - swift build
+  - swift test
+- id: MVP-POLISH-001
+  title: Prevent overlapping swap executions
+  group: polish
+  status: blocked
+  depends_on:
+  - MVP-FLOW-006
+  - MVP-UI-006
+  - MVP-HOTKEY-003
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - A second trigger during an active swap does not start another concurrent swap.
+  - UI returns to ready state after completion or failure.
+  - Unit test covers rapid duplicate triggers.
+  validation:
+  - swift test
+  - swift build
+- id: MVP-POLISH-002
+  title: Add per-window failure logging without sensitive content
+  group: polish
+  status: blocked
+  depends_on:
+  - MVP-FLOW-006
+  allowed_paths:
+  - Sources/ScreenSwapApp/**
+  - Tests/**
+  acceptance:
+  - Log operation outcome and identifiers needed for debugging.
+  - Do not log window titles or user document content by default.
+  - One failure does not suppress later window attempts.
+  validation:
+  - swift test
+  - swift build
+- id: MVP-POLISH-003
+  title: Add full core geometry regression matrix
+  group: polish
+  status: blocked
+  depends_on:
+  - MVP-CORE-006
+  allowed_paths:
+  - Tests/ScreenSwapCoreTests/**
+  acceptance:
+  - Cover equal displays, unequal resolution, unequal aspect ratio, portrait target, edge positions, oversized frames
+    and spanning windows.
+  - Tests are deterministic and contain no Accessibility calls.
+  validation:
+  - swift test
+- id: MVP-POLISH-004
+  title: Document manual two-monitor validation checklist
+  group: polish
+  status: blocked
+  depends_on:
+  - MVP-FLOW-006
+  - MVP-UI-006
+  allowed_paths:
+  - docs/**
+  acceptance:
+  - Checklist covers Mac built-in plus external display.
+  - Checklist includes different resolution/aspect ratio cases.
+  - Checklist includes Finder, browser, Terminal/Xcode and one non-resizable or special window case.
+  - Checklist records expected and actual results.
+  validation: []
+- id: MVP-POLISH-005
+  title: Perform and record first manual two-monitor end-to-end validation
+  group: polish
+  status: blocked
+  depends_on:
+  - MVP-POLISH-001
+  - MVP-POLISH-004
+  - MVP-UI-008
+  allowed_paths:
+  - docs/validation/**
+  acceptance:
+  - Record hardware/display arrangement used.
+  - Record tested applications and layouts.
+  - Record pass/fail for swap, proportional placement and error handling.
+  - No product-code changes are part of this task.
+  validation: []
+- id: MVP-POLISH-006
+  title: Prepare MVP release-readiness checklist
+  group: polish
+  status: blocked
+  depends_on:
+  - MVP-POLISH-003
+  - MVP-POLISH-005
+  - MVP-SETTINGS-005
+  allowed_paths:
+  - docs/**
+  acceptance:
+  - Confirm all MVP backlog tasks are complete or explicitly waived.
+  - Confirm deferred features remain absent.
+  - List signing/notarization work as release packaging, not product logic.
+  validation:
+  - swift test
+  - swift build
