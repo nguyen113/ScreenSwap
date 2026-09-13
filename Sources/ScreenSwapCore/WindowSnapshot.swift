@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 public struct WindowID: Hashable, Sendable {
     public let processIdentifier: Int32

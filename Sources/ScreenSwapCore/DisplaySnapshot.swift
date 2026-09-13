@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 public struct DisplaySnapshot: Equatable, Sendable {
     public let id: UInt32

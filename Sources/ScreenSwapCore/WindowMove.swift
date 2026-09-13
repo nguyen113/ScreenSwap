@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 public struct WindowMove: Equatable, Sendable {
     public let windowID: WindowID
