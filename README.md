@@ -17,6 +17,10 @@ it as:
 
 Do **not** treat its ChatGPT task cost as a measured API cost unless separate API telemetry exists.
 
+## Support ScreenSwap
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C3N027TX55)
+
 ## Build and test
 
 On macOS:
@@ -55,7 +59,7 @@ must name an explicit Developer ID Application identity.
 - The default global shortcut is Control–Shift–S. Settings lets you
   replace it, choose launch at login, and explicitly request Accessibility
   access. The status menu also includes an About window with the app version
-  and project link.
+  and project link, plus a Ko-fi support button.
 - Hover feedback respects the macOS Reduce Motion preference. The latest
   immutable pre-swap geometry is retained in memory as the seam for a future
   undo command; it does not yet expose undo UI.
