@@ -68,7 +68,12 @@ func statusFeedbackCatalogProvidesImmediateSafePayloadForEveryOutcome() {
         (
             .unsupportedDisplayCount(3),
             "ScreenSwap",
-            "ScreenSwap requires exactly two displays; found 3."
+            "ScreenSwap requires at least two active displays; found 3."
+        ),
+        (
+            .displayTopologyChanged,
+            "Display configuration changed",
+            "Your display configuration changed. Try the swap again."
         ),
         (
             .alreadyRunning,
@@ -217,11 +222,61 @@ func statusMenuBuildsFreshDisplayGroupsSelectionAndSpanningWarning() {
     let automaticallyIncluded = menuController.menu.items.first { $0.title.contains("included automatically") }
     #expect(automaticallyIncluded?.state == .on)
     #expect(automaticallyIncluded?.isEnabled == false)
-    let group = menuController.menu.items.first { $0.title == "1 — Built-in" }!
+    let group = menuController.menu.items.first { $0.title == "    All windows" }!
     #expect(group.state == .on)
     menuController.perform(NSSelectorFromString("toggleGroup:"), with: group)
     #expect(!selection.isSelected(firstKey))
     #expect(selection.isSelected(secondKey))
+}
+
+@Test
+@MainActor
+func statusMenuSeparatesDisplayPairMembershipFromAllWindowsSelection() {
+    let displays = [1, 2, 3].enumerated().map { offset, id in
+        InventoryDisplay(
+            snapshot: DisplaySnapshot(
+                id: UInt32(id),
+                frame: CGRect(x: CGFloat(offset * 100), y: 0, width: 100, height: 100),
+                visibleFrame: CGRect(x: CGFloat(offset * 100), y: 0, width: 100, height: 100)
+            ),
+            ordinal: offset + 1,
+            name: nil
+        )
+    }
+    let first = RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 1)
+    let second = RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 2)
+    let third = RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 3)
+    let inventory = WindowInventory(
+        displays: displays,
+        windows: [
+            InventoryWindow(key: first, displayID: 1, label: "First A", isSelectable: true, isSpanning: false),
+            InventoryWindow(key: second, displayID: 1, label: "First B", isSelectable: true, isSpanning: false),
+            InventoryWindow(key: third, displayID: 2, label: "Second", isSelectable: true, isSpanning: false)
+        ],
+        selectedDisplayIDs: [1, 2],
+        primaryDisplayID: 1
+    )
+    let displaySelection = DisplayPairSelectionStore()
+    displaySelection.reconcile(
+        activeDisplays: displays.map(\.snapshot),
+        primaryDisplayID: 1,
+        candidateCounts: [1: 2, 2: 1]
+    )
+    let windowSelection = WindowSelectionStore()
+    let menuController = StatusItemMenuController(
+        inventoryProvider: StatusFakeInventory(inventory),
+        selection: windowSelection,
+        displaySelection: displaySelection
+    )
+
+    let displayThree = menuController.menu.items.first { $0.title == "Display 3" }!
+    #expect(displayThree.state == .off)
+    #expect(displayThree.isEnabled)
+    menuController.perform(NSSelectorFromString("toggleDisplay:"), with: displayThree)
+    #expect(displaySelection.frozenPair() == [1, 3])
+    #expect(windowSelection.isSelected(first))
+    #expect(windowSelection.isSelected(second))
+    #expect(windowSelection.isSelected(third))
 }
 
 @Test

@@ -4,14 +4,13 @@ import os
 import ScreenSwapCore
 
 @MainActor
-public final class AccessibilityWindowService: WindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowInventoryProviding {
+public final class AccessibilityWindowService: DisplayPairWindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowInventoryProviding, DisplayCandidateCounting {
     private static let diagnosticLogger = Logger(subsystem: "com.screenswap.app", category: "diagnostics")
     private let client: any AccessibilityClient
     /// Inventory discovery owns a separate client cache so opening the menu
     /// cannot invalidate AX handles retained by an in-flight swap transaction.
     private let inventoryClient: (any AccessibilityClient)?
     private let processIdentifier: Int32
-    private let mapping = WindowMappingEngine()
     private var lookup: [WindowID: AccessibilityWindowHandle] = [:]
     private var presentationStates: [WindowID: WindowPresentationState] = [:]
     private var visuallyMaximizedWindowIDs: Set<WindowID> = []
@@ -117,6 +116,19 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
         return WindowInventory(displays: displays, windows: windows)
     }
 
+    public func candidateCounts(activeDisplays: [DisplaySnapshot]) -> [UInt32: Int] {
+        let inventoryDisplays = activeDisplays.sorted { $0.id < $1.id }.enumerated().map {
+            InventoryDisplay(snapshot: $0.element, ordinal: $0.offset + 1, name: nil)
+        }
+        let inventory = inventory(displays: inventoryDisplays)
+        return inventory.windows.reduce(into: [UInt32: Int]()) { counts, window in
+            guard let displayID = window.displayID,
+                  !window.isSpanning,
+                  window.isSelectable || window.isAutomaticallyIncluded else { return }
+            counts[displayID, default: 0] += 1
+        }
+    }
+
     private func isTransient(_ attributes: AccessibilityWindowAttributes) -> Bool {
         guard attributes.role == "AXWindow" else { return true }
         let transientSubroles: Set<String> = [
@@ -128,7 +140,15 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
     }
 
     public func captureWindows(displays: [DisplaySnapshot]) -> WindowCaptureBatch {
-        guard displays.count == 2 else {
+        captureWindows(activeDisplays: displays, selectedDisplays: displays)
+    }
+
+    public func captureWindows(
+        activeDisplays: [DisplaySnapshot],
+        selectedDisplays: [DisplaySnapshot]
+    ) -> WindowCaptureBatch {
+        guard selectedDisplays.count == 2,
+              Set(selectedDisplays.map(\.id)).isSubset(of: Set(activeDisplays.map(\.id))) else {
             lookup = [:]
             presentationStates = [:]
             visuallyMaximizedWindowIDs = []
@@ -138,8 +158,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
             sourceDisplayIDs = [:]
             return WindowCaptureBatch(windows: [])
         }
-        let displayA = displays[0]
-        let displayB = displays[1]
+        let selectedDisplayIDs = Set(selectedDisplays.map(\.id))
         var captured: [CapturedWindow] = []
         var failures: [WindowReadFailure] = []
         var skipped: [WindowSkip] = []
@@ -149,6 +168,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
         var nextSourceFrames: [WindowID: CGRect] = [:]
         var nextVisuallyMaximizedWindowIDs: Set<WindowID> = []
         var nextMaximizedWindowNumbers: Set<UInt32> = []
+        var nextKnownRuntimeKeys: Set<RuntimeWindowKey> = []
         var geometryMaximizedCount = 0
         var retainedMaximizedCount = 0
         var knownZoomedCount = 0
@@ -248,24 +268,41 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                     continue
                 }
                 let visibleWindow = visibleIndex.map { unmatchedVisibleWindows.remove(at: $0) }
+                let runtimeKey = visibleWindow?.windowNumber.map {
+                    RuntimeWindowKey(processIdentifier: application.processIdentifier, quartzWindowNumber: $0)
+                }
+                // Resolve both ownership and spanning using the whole active
+                // topology before checking whether this window belongs to the
+                // selected pair. This prevents a third-display window from
+                // being assigned to a selected display by two-display logic.
+                let isSpanning = WindowInventoryClassifier.spans(frame, displays: activeDisplays)
+                guard let sourceDisplayID = WindowInventoryClassifier.owner(of: frame, displays: activeDisplays),
+                      let sourceDisplay = activeDisplays.first(where: { $0.id == sourceDisplayID }) else {
+                    skipped.append(WindowSkip(
+                        processIdentifier: application.processIdentifier,
+                        reason: isSpanning ? .spanningDisplays : .unknownSourceDisplay
+                    ))
+                    continue
+                }
+                let retainedMaximizedIntent = visibleWindow?.windowNumber.map(maximizedWindowNumbers.contains) == true
+                let fillsSourceVisibleFrame = fillsVisibleFrame(frame, on: sourceDisplay)
+                let isVisuallyMaximized = attributes.presentationState.isFullScreen != true &&
+                    (retainedMaximizedIntent || fillsSourceVisibleFrame)
+                // Preserve the established one-point maximized-frame tolerance
+                // before applying full-topology spanning classification.
+                if isSpanning, !isVisuallyMaximized {
+                    skipped.append(WindowSkip(processIdentifier: application.processIdentifier, reason: .spanningDisplays))
+                    continue
+                }
+                if let runtimeKey { nextKnownRuntimeKeys.insert(runtimeKey) }
+                guard selectedDisplayIDs.contains(sourceDisplayID) else {
+                    skipped.append(WindowSkip(processIdentifier: application.processIdentifier, reason: .unselectedDisplay))
+                    continue
+                }
                 let id = WindowID(
                     processIdentifier: application.processIdentifier,
                     accessibilityIdentifier: UUID().uuidString
                 )
-                let sourceDisplayID = mapping.sourceDisplayID(for: frame, displayA: displayA, displayB: displayB)
-                let sourceDisplay: DisplaySnapshot?
-                switch sourceDisplayID {
-                case displayA.id:
-                    sourceDisplay = displayA
-                case displayB.id:
-                    sourceDisplay = displayB
-                default:
-                    sourceDisplay = nil
-                }
-                let retainedMaximizedIntent = visibleWindow?.windowNumber.map(maximizedWindowNumbers.contains) == true
-                let fillsSourceVisibleFrame = sourceDisplay.map { fillsVisibleFrame(frame, on: $0) } == true
-                let isVisuallyMaximized = attributes.presentationState.isFullScreen != true &&
-                    (retainedMaximizedIntent || fillsSourceVisibleFrame)
                 if attributes.presentationState.isZoomed == true {
                     knownZoomedCount += 1
                 } else if attributes.presentationState.isZoomed == nil {
@@ -285,12 +322,9 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                 // genuinely spanning windows remain untouched.
                 let snapshotFrame: CGRect
                 if isVisuallyMaximized {
-                    snapshotFrame = sourceDisplay?.visibleFrame ?? frame
-                } else if let sourceDisplay,
-                          !spansBothDisplays(frame, displayA: displayA, displayB: displayB) {
-                    snapshotFrame = canonicalizeVisibleEdges(frame, on: sourceDisplay)
+                    snapshotFrame = sourceDisplay.visibleFrame
                 } else {
-                    snapshotFrame = frame
+                    snapshotFrame = canonicalizeVisibleEdges(frame, on: sourceDisplay)
                 }
                 let snapshot = WindowSnapshot(
                     id: id,
@@ -303,9 +337,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                         isResizable: isResizable,
                         presentationState: attributes.presentationState,
                         isVisuallyMaximized: isVisuallyMaximized,
-                        runtimeKey: visibleWindow?.windowNumber.map {
-                            RuntimeWindowKey(processIdentifier: application.processIdentifier, quartzWindowNumber: $0)
-                        }
+                        runtimeKey: runtimeKey
                     )
                 )
                 nextLookup[id] = handle
@@ -328,7 +360,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
         presentationStates = nextPresentationStates
         visuallyMaximizedWindowIDs = nextVisuallyMaximizedWindowIDs
         maximizedWindowNumbers = nextMaximizedWindowNumbers
-        displaysByID = Dictionary(uniqueKeysWithValues: displays.map { ($0.id, $0) })
+        displaysByID = Dictionary(uniqueKeysWithValues: activeDisplays.map { ($0.id, $0) })
         sourceFrames = nextSourceFrames
         sourceDisplayIDs = Dictionary(uniqueKeysWithValues: captured.map { ($0.snapshot.id, $0.snapshot.sourceDisplayID) })
         diagnosticWindowOrdinals = Dictionary(
@@ -339,10 +371,10 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
             .sorted()
             .joined(separator: ",")
         recordDiagnostic(
-            "[ScreenSwapCapture] displays=\(displays.map(format).joined(separator: ";")) total=\(totalWindows) eligible=\(captured.count) failures=\(failures.count) skipped=\(skippedSummary.isEmpty ? "none" : skippedSummary) geometry_maximized=\(geometryMaximizedCount) retained_maximized=\(retainedMaximizedCount) known_zoomed=\(knownZoomedCount) unknown_zoom_state=\(unknownZoomStateCount)"
+            "[ScreenSwapCapture] active_displays=\(activeDisplays.map(format).joined(separator: ";")) selected_displays=\(selectedDisplays.map(format).joined(separator: ";")) total=\(totalWindows) eligible=\(captured.count) failures=\(failures.count) skipped=\(skippedSummary.isEmpty ? "none" : skippedSummary) geometry_maximized=\(geometryMaximizedCount) retained_maximized=\(retainedMaximizedCount) known_zoomed=\(knownZoomedCount) unknown_zoom_state=\(unknownZoomStateCount)"
         )
         for (offset, capturedWindow) in captured.enumerated() {
-            let sourceDisplay = displays.first { $0.id == capturedWindow.snapshot.sourceDisplayID }
+            let sourceDisplay = activeDisplays.first { $0.id == capturedWindow.snapshot.sourceDisplayID }
             recordDiagnostic(
                 "[ScreenSwapCaptureWindow] ordinal=\(offset + 1) source=\(capturedWindow.snapshot.sourceDisplayID) frame=\(format(capturedWindow.snapshot.frame)) source_visible=\(sourceDisplay.map { format($0.visibleFrame) } ?? "none") visual_maximized=\(capturedWindow.isVisuallyMaximized) zoom=\(format(capturedWindow.presentationState.isZoomed)) zoom_button=\(capturedWindow.presentationState.canToggleZoom)"
             )
@@ -351,7 +383,8 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
             windows: captured,
             failures: failures,
             totalWindows: totalWindows,
-            skipped: skipped
+            skipped: skipped,
+            knownRuntimeKeys: nextKnownRuntimeKeys
         )
     }
 
@@ -418,20 +451,6 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
             width: fillsVisibleWidth ? visibleFrame.width : frame.width,
             height: fillsVisibleHeight ? visibleFrame.height : frame.height
         )
-    }
-
-    private func spansBothDisplays(
-        _ frame: CGRect,
-        displayA: DisplaySnapshot,
-        displayB: DisplaySnapshot
-    ) -> Bool {
-        hasPositiveAreaIntersection(frame, displayA.frame) &&
-            hasPositiveAreaIntersection(frame, displayB.frame)
-    }
-
-    private func hasPositiveAreaIntersection(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
-        let overlap = lhs.intersection(rhs)
-        return !overlap.isNull && overlap.width > 0 && overlap.height > 0
     }
 
     public func apply(move: WindowMove, isResizable: Bool) -> WindowApplyResult {

@@ -13,6 +13,11 @@ public protocol DisplayProviding: AnyObject {
     func currentDisplays() throws -> [DisplaySnapshot]
 }
 
+@MainActor
+public protocol PrimaryDisplayProviding: AnyObject {
+    func primaryDisplayID() -> UInt32
+}
+
 /// Optional presentation metadata for the menu. Geometry continues to use
 /// only `DisplaySnapshot`; a display name is never an identity.
 @MainActor
@@ -21,7 +26,7 @@ public protocol DisplayInventoryProviding: AnyObject {
 }
 
 @MainActor
-public final class LiveDisplayProvider: DisplayProviding, DisplayInventoryProviding {
+public final class LiveDisplayProvider: DisplayProviding, DisplayInventoryProviding, PrimaryDisplayProviding {
     public init() {}
 
     public func currentDisplays() throws -> [DisplaySnapshot] {
@@ -58,4 +63,6 @@ public final class LiveDisplayProvider: DisplayProviding, DisplayInventoryProvid
             InventoryDisplay(snapshot: snapshot, ordinal: offset + 1, name: namesByID[snapshot.id] ?? nil)
         }
     }
+
+    public func primaryDisplayID() -> UInt32 { CGMainDisplayID() }
 }

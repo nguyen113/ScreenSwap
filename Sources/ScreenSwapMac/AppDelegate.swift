@@ -21,6 +21,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: dependencies.settings,
             inventoryProvider: dependencies.menuInventory,
             selection: dependencies.selectionStore,
+            displaySelection: dependencies.displayPairSelectionStore,
             shortcutRegistration: { [weak self] shortcut in
                 self?.registerGlobalShortcut(shortcut) ?? false
             }
@@ -49,7 +50,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
           let displays = try? dependencies.displayProvider.currentDisplays() else {
             return
         }
-        _ = dependencies.windowService.captureWindows(displays: displays)
+        let primaryDisplayID = dependencies.displayProvider.primaryDisplayID()
+        dependencies.displayPairSelectionStore.reconcile(
+            activeDisplays: displays,
+            primaryDisplayID: primaryDisplayID,
+            candidateCounts: dependencies.windowService.candidateCounts(activeDisplays: displays)
+        )
+        let selectedDisplays = dependencies.displayPairSelectionStore.frozenPair().compactMap { id in
+            displays.first { $0.id == id }
+        }
+        _ = dependencies.windowService.captureWindows(
+            activeDisplays: displays,
+            selectedDisplays: selectedDisplays
+        )
     }
 
     private func registerGlobalShortcut(_ shortcut: HotKeyShortcut) -> Bool {

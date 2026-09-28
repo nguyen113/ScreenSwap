@@ -107,17 +107,22 @@ public struct WindowCaptureBatch: Equatable, Sendable {
     /// window list could not be read.
     public let totalWindows: Int
     public let skipped: [WindowSkip]
+    /// Runtime keys observed across the full topology, including windows on
+    /// displays outside the active pair. This preserves their user choices.
+    public let knownRuntimeKeys: Set<RuntimeWindowKey>
 
     public init(
         windows: [CapturedWindow],
         failures: [WindowReadFailure] = [],
         totalWindows: Int? = nil,
-        skipped: [WindowSkip] = []
+        skipped: [WindowSkip] = [],
+        knownRuntimeKeys: Set<RuntimeWindowKey>? = nil
     ) {
         self.windows = windows
         self.failures = failures
         self.totalWindows = totalWindows ?? windows.count + skipped.count
         self.skipped = skipped
+        self.knownRuntimeKeys = knownRuntimeKeys ?? Set(windows.compactMap(\.runtimeKey))
     }
 }
 
@@ -132,6 +137,7 @@ public enum WindowSkipReason: String, Codable, Equatable, Sendable {
     case notVisible
     case presentationStateUnavailable
     case spanningDisplays
+    case unselectedDisplay
     case unknownSourceDisplay
     case readFailure
 }
@@ -210,6 +216,9 @@ public enum SwapOutcome: Equatable, Sendable {
     case noSelection
     case noPermission
     case unsupportedDisplayCount(Int)
+    /// Active display IDs or geometry changed after the transaction snapshot.
+    /// No Accessibility mutation is attempted; retry against the new topology.
+    case displayTopologyChanged
     case alreadyRunning
 }
 
@@ -229,6 +238,8 @@ public extension SwapOutcome {
             "noPermission"
         case .unsupportedDisplayCount:
             "unsupportedDisplayCount"
+        case .displayTopologyChanged:
+            "displayTopologyChanged"
         case .alreadyRunning:
             "alreadyRunning"
         }
@@ -238,6 +249,23 @@ public extension SwapOutcome {
 public protocol WindowProviding: AnyObject {
     @MainActor
     func captureWindows(displays: [DisplaySnapshot]) -> WindowCaptureBatch
+}
+
+/// Pair-aware capture receives every active display to establish ownership and
+/// spanning correctly, while returning only windows for the frozen pair.
+public protocol DisplayPairWindowProviding: WindowProviding {
+    @MainActor
+    func captureWindows(
+        activeDisplays: [DisplaySnapshot],
+        selectedDisplays: [DisplaySnapshot]
+    ) -> WindowCaptureBatch
+}
+
+/// Candidate counts are used only for deterministic display-pair selection.
+/// They contain no presentation metadata or persistent window identity.
+public protocol DisplayCandidateCounting: AnyObject {
+    @MainActor
+    func candidateCounts(activeDisplays: [DisplaySnapshot]) -> [UInt32: Int]
 }
 
 public protocol WindowApplying: AnyObject {

@@ -13,6 +13,7 @@ public final class SwapCoordinator {
     private let clock: any MonotonicTimeSource
     private let performanceRecorder: (any SwapPerformanceRecording)?
     private let selection: (any SwapSelectionProviding)?
+    private let displaySelection: DisplayPairSelectionStore
     private var isRunning = false
     public private(set) var lastDiagnostics = SwapDiagnostics.empty
     /// Transaction-local AX handles are deliberately not retained. This is the
@@ -28,6 +29,7 @@ public final class SwapCoordinator {
         planner: any SwapPlanning = WindowMappingEngine(),
         windowVerifier: (any WindowVerifying)? = nil,
         selection: (any SwapSelectionProviding)? = nil,
+        displaySelection: DisplayPairSelectionStore = DisplayPairSelectionStore(),
         clock: any MonotonicTimeSource = MachContinuousTimeSource(),
         performanceRecorder: (any SwapPerformanceRecording)? = nil
     ) {
@@ -41,6 +43,7 @@ public final class SwapCoordinator {
         self.clock = clock
         self.performanceRecorder = performanceRecorder
         self.selection = selection
+        self.displaySelection = displaySelection
     }
 
     public func swap() -> SwapOutcome {
@@ -63,17 +66,22 @@ public final class SwapCoordinator {
             lastDiagnostics = .empty
             return .unsupportedDisplayCount(0)
         }
-        guard currentDisplays.count == 2 else {
+        guard currentDisplays.count >= 2 else {
             lastDiagnostics = .empty
             return .unsupportedDisplayCount(currentDisplays.count)
         }
 
-        let orderedDisplays = currentDisplays.sorted { $0.id < $1.id }
-        let displayA = orderedDisplays[0]
-        let displayB = orderedDisplays[1]
-        let batch = windowProvider.captureWindows(displays: [displayA, displayB])
+        guard let (displayA, displayB) = frozenPair(from: currentDisplays) else {
+            lastDiagnostics = .empty
+            return .unsupportedDisplayCount(currentDisplays.count)
+        }
+        let batch = capture(activeDisplays: currentDisplays, selectedDisplays: [displayA, displayB])
         latestPreSwapSnapshots = batch.windows.map(\.snapshot)
-        selection?.reconcile(Set(batch.windows.compactMap(\.runtimeKey)))
+        guard topologyMatches(currentDisplays) else {
+            lastDiagnostics = topologyChangedDiagnostics(batch: batch, displayA: displayA, displayB: displayB)
+            return .displayTopologyChanged
+        }
+        selection?.reconcile(batch.knownRuntimeKeys)
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
             guard let selectedKeys else { return true }
@@ -107,6 +115,23 @@ public final class SwapCoordinator {
             capturedWindows: batch.windows
         )
         let capabilities = Dictionary(uniqueKeysWithValues: batch.windows.map { ($0.snapshot.id, $0.isResizable) })
+
+        // A display may disconnect or change scale/arrangement while planning.
+        // Recheck immediately before the first AX write rather than applying
+        // stale destination geometry to a changed topology.
+        guard topologyMatches(currentDisplays) else {
+            lastDiagnostics = makeDiagnostics(
+                batch: batch,
+                selectedWindows: selectedWindows,
+                moves: moves,
+                displayA: displayA,
+                displayB: displayB,
+                attempted: 0,
+                succeeded: 0,
+                failed: 0
+            )
+            return .displayTopologyChanged
+        }
 
         var attempted = 0
         var succeeded = 0
@@ -186,7 +211,7 @@ public final class SwapCoordinator {
                 verified: false, timedOut: false
             )
         }
-        guard currentDisplays.count == 2 else {
+        guard currentDisplays.count >= 2 else {
             lastDiagnostics = .empty
             let now = clock.nowNanoseconds()
             return finishMeasured(
@@ -197,12 +222,30 @@ public final class SwapCoordinator {
             )
         }
 
-        let orderedDisplays = currentDisplays.sorted { $0.id < $1.id }
-        let displayA = orderedDisplays[0]
-        let displayB = orderedDisplays[1]
-        let batch = windowProvider.captureWindows(displays: [displayA, displayB])
+        guard let (displayA, displayB) = frozenPair(from: currentDisplays) else {
+            lastDiagnostics = .empty
+            let now = clock.nowNanoseconds()
+            return finishMeasured(
+                outcome: .unsupportedDisplayCount(currentDisplays.count),
+                t0: t0, t1: now, t2: now, t3: now, t4: now, t5: now,
+                total: 0, eligible: 0, skipped: 0, skipReasons: [:], attempted: 0, succeeded: 0, failed: 0,
+                verified: false, timedOut: false
+            )
+        }
+        let batch = capture(activeDisplays: currentDisplays, selectedDisplays: [displayA, displayB])
         latestPreSwapSnapshots = batch.windows.map(\.snapshot)
-        selection?.reconcile(Set(batch.windows.compactMap(\.runtimeKey)))
+        guard topologyMatches(currentDisplays) else {
+            let now = clock.nowNanoseconds()
+            lastDiagnostics = topologyChangedDiagnostics(batch: batch, displayA: displayA, displayB: displayB)
+            return finishMeasured(
+                outcome: .displayTopologyChanged,
+                t0: t0, t1: now, t2: now, t3: now, t4: now, t5: now,
+                total: batch.totalWindows, eligible: batch.windows.count, skipped: batch.skipped.count,
+                skipReasons: lastDiagnostics.skippedByReason, attempted: 0, succeeded: 0, failed: 0,
+                verified: false, timedOut: false
+            )
+        }
+        selection?.reconcile(batch.knownRuntimeKeys)
         let t1 = clock.nowNanoseconds()
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
@@ -235,6 +278,27 @@ public final class SwapCoordinator {
         )
         let t2 = clock.nowNanoseconds()
         let capabilities = Dictionary(uniqueKeysWithValues: batch.windows.map { ($0.snapshot.id, $0.isResizable) })
+
+        guard topologyMatches(currentDisplays) else {
+            let now = clock.nowNanoseconds()
+            lastDiagnostics = makeDiagnostics(
+                batch: batch,
+                selectedWindows: selectedWindows,
+                moves: moves,
+                displayA: displayA,
+                displayB: displayB,
+                attempted: 0,
+                succeeded: 0,
+                failed: 0
+            )
+            return finishMeasured(
+                outcome: .displayTopologyChanged,
+                t0: t0, t1: t1, t2: t2, t3: now, t4: now, t5: now,
+                total: lastDiagnostics.discovered, eligible: lastDiagnostics.eligible,
+                skipped: lastDiagnostics.skippedByReason.values.reduce(0, +), skipReasons: lastDiagnostics.skippedByReason,
+                attempted: 0, succeeded: 0, failed: 0, verified: false, timedOut: false
+            )
+        }
 
         let t3 = clock.nowNanoseconds()
         var applyFailedIDs = Set<WindowID>()
@@ -281,6 +345,71 @@ public final class SwapCoordinator {
             skipped: lastDiagnostics.skippedByReason.values.reduce(0, +), skipReasons: lastDiagnostics.skippedByReason,
             attempted: moves.count, succeeded: succeeded, failed: failed,
             verified: !moves.isEmpty && failed == 0 && verification.didVerify, timedOut: verification.timedOut
+        )
+    }
+
+    /// Selects exactly two displays once per transaction. The returned values
+    /// are held locally, so later menu changes cannot reroute in-flight moves.
+    private func frozenPair(from activeDisplays: [DisplaySnapshot]) -> (DisplaySnapshot, DisplaySnapshot)? {
+        let primaryDisplayID = (displays as? any PrimaryDisplayProviding)?.primaryDisplayID()
+            ?? activeDisplays.map(\.id).min()
+            ?? 0
+        let candidateCounts: [UInt32: Int]
+        if activeDisplays.count > 2 {
+            candidateCounts = (windowProvider as? any DisplayCandidateCounting)?
+                .candidateCounts(activeDisplays: activeDisplays) ?? [:]
+        } else {
+            candidateCounts = [:]
+        }
+        displaySelection.reconcile(
+            activeDisplays: activeDisplays,
+            primaryDisplayID: primaryDisplayID,
+            candidateCounts: candidateCounts
+        )
+        let ids = displaySelection.frozenPair()
+        guard ids.count == 2,
+              let displayA = activeDisplays.first(where: { $0.id == ids[0] }),
+              let displayB = activeDisplays.first(where: { $0.id == ids[1] }) else {
+            return nil
+        }
+        return (displayA, displayB)
+    }
+
+    private func capture(
+        activeDisplays: [DisplaySnapshot],
+        selectedDisplays: [DisplaySnapshot]
+    ) -> WindowCaptureBatch {
+        if let pairProvider = windowProvider as? any DisplayPairWindowProviding {
+            return pairProvider.captureWindows(
+                activeDisplays: activeDisplays,
+                selectedDisplays: selectedDisplays
+            )
+        }
+        // Compatibility seam for lightweight fakes and third-party adapters.
+        // The live service always receives the complete topology above.
+        return windowProvider.captureWindows(displays: selectedDisplays)
+    }
+
+    private func topologyMatches(_ transactionDisplays: [DisplaySnapshot]) -> Bool {
+        guard let latestDisplays = try? displays.currentDisplays() else { return false }
+        return transactionDisplays.sorted { $0.id < $1.id } ==
+            latestDisplays.sorted { $0.id < $1.id }
+    }
+
+    private func topologyChangedDiagnostics(
+        batch: WindowCaptureBatch,
+        displayA: DisplaySnapshot,
+        displayB: DisplaySnapshot
+    ) -> SwapDiagnostics {
+        makeDiagnostics(
+            batch: batch,
+            selectedWindows: [],
+            moves: [],
+            displayA: displayA,
+            displayB: displayB,
+            attempted: 0,
+            succeeded: 0,
+            failed: 0
         )
     }
 

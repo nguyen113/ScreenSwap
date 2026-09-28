@@ -54,16 +54,28 @@ public struct WindowInventory: Equatable, Sendable {
     public let displays: [InventoryDisplay]
     public let windows: [InventoryWindow]
     public let isAuthorized: Bool
+    public let selectedDisplayIDs: Set<UInt32>
+    public let primaryDisplayID: UInt32?
 
-    public init(displays: [InventoryDisplay], windows: [InventoryWindow], isAuthorized: Bool = true) {
+    public init(
+        displays: [InventoryDisplay],
+        windows: [InventoryWindow],
+        isAuthorized: Bool = true,
+        selectedDisplayIDs: Set<UInt32>? = nil,
+        primaryDisplayID: UInt32? = nil
+    ) {
         self.displays = displays.sorted { $0.snapshot.id < $1.snapshot.id }
         self.windows = windows
         self.isAuthorized = isAuthorized
+        let activeIDs = Set(displays.map { $0.snapshot.id })
+        self.selectedDisplayIDs = selectedDisplayIDs ?? (activeIDs.count <= 2 ? activeIDs : Set(activeIDs.sorted().prefix(2)))
+        self.primaryDisplayID = primaryDisplayID
     }
 
     public static let permissionRequired = WindowInventory(displays: [], windows: [], isAuthorized: false)
-    public var supportsSelection: Bool { isAuthorized && displays.count == 2 }
+    public var supportsSelection: Bool { isAuthorized && selectedDisplayIDs.count == 2 }
     public var spanningWindows: [InventoryWindow] { windows.filter(\.isSpanning) }
+    public func isDisplaySelected(_ id: UInt32) -> Bool { selectedDisplayIDs.contains(id) }
     public func windows(on displayID: UInt32) -> [InventoryWindow] {
         windows.filter { !$0.isSpanning && $0.displayID == displayID }
     }

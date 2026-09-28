@@ -1125,6 +1125,58 @@ func accessibilityServiceAutomaticallyIncludesOnlyAXOnlyNativeFullScreenInventor
 
 @Test
 @MainActor
+func accessibilityServiceUsesFullTopologyBeforeFilteringToSelectedPair() {
+    let client = FakeAccessibilityClient()
+    let application = AccessibilityApplication(processIdentifier: 100)
+    let onFirst = AccessibilityWindowHandle(token: "on-first")
+    let onUnselected = AccessibilityWindowHandle(token: "on-unselected")
+    let onThird = AccessibilityWindowHandle(token: "on-third")
+    let spanningUnselectedAndThird = AccessibilityWindowHandle(token: "spanning-unselected-third")
+    let nativeFullScreenUnselected = AccessibilityWindowHandle(token: "native-full-screen-unselected")
+    client.appValues = [application]
+    client.handlesByPID[application.processIdentifier] = [
+        onFirst, onUnselected, onThird, spanningUnselectedAndThird, nativeFullScreenUnselected
+    ]
+    let activeDisplays = [
+        DisplaySnapshot(id: 1, frame: CGRect(x: 0, y: 0, width: 1_000, height: 800), visibleFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800)),
+        DisplaySnapshot(id: 2, frame: CGRect(x: 1_000, y: 0, width: 1_000, height: 800), visibleFrame: CGRect(x: 1_000, y: 0, width: 1_000, height: 800)),
+        DisplaySnapshot(id: 3, frame: CGRect(x: 2_000, y: 0, width: 1_000, height: 800), visibleFrame: CGRect(x: 2_000, y: 0, width: 1_000, height: 800))
+    ]
+    client.attributesByToken[onFirst.token] = serviceAttributes(position: CGPoint(x: 100, y: 100))
+    client.attributesByToken[onUnselected.token] = serviceAttributes(position: CGPoint(x: 1_100, y: 100))
+    client.attributesByToken[onThird.token] = serviceAttributes(position: CGPoint(x: 2_100, y: 100))
+    client.attributesByToken[spanningUnselectedAndThird.token] = serviceAttributes(
+        position: CGPoint(x: 1_900, y: 100),
+        size: CGSize(width: 300, height: 200)
+    )
+    client.attributesByToken[nativeFullScreenUnselected.token] = serviceAttributes(
+        position: CGPoint(x: 1_000, y: 0),
+        size: CGSize(width: 1_000, height: 800),
+        presentationState: WindowPresentationState(isFullScreen: true, canToggleFullScreen: true)
+    )
+    client.visibleWindowValues = [
+        VisibleWindowSnapshot(processIdentifier: 100, frame: CGRect(x: 100, y: 100, width: 300, height: 200), windowNumber: 1),
+        VisibleWindowSnapshot(processIdentifier: 100, frame: CGRect(x: 1_100, y: 100, width: 300, height: 200), windowNumber: 2),
+        VisibleWindowSnapshot(processIdentifier: 100, frame: CGRect(x: 2_100, y: 100, width: 300, height: 200), windowNumber: 3),
+        VisibleWindowSnapshot(processIdentifier: 100, frame: CGRect(x: 1_900, y: 100, width: 300, height: 200), windowNumber: 4)
+    ]
+
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(activeDisplays: activeDisplays, selectedDisplays: [activeDisplays[0], activeDisplays[2]])
+
+    #expect(batch.windows.map(\.snapshot.sourceDisplayID).sorted() == [1, 3])
+    #expect(batch.skipped.filter { $0.reason == .unselectedDisplay }.count == 2)
+    #expect(batch.skipped.filter { $0.reason == .spanningDisplays }.count == 1)
+    #expect(batch.knownRuntimeKeys == [
+        RuntimeWindowKey(processIdentifier: 100, quartzWindowNumber: 1),
+        RuntimeWindowKey(processIdentifier: 100, quartzWindowNumber: 2),
+        RuntimeWindowKey(processIdentifier: 100, quartzWindowNumber: 3)
+    ])
+    #expect(client.writeEvents.isEmpty)
+}
+
+@Test
+@MainActor
 func accessibilityServiceRestoresFullScreenStateAfterRelocatingWindow() {
     let client = FakeAccessibilityClient()
     let handle = AccessibilityWindowHandle(token: "full-screen")
