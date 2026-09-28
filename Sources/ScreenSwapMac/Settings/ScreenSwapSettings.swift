@@ -6,8 +6,8 @@ public struct HotKeyShortcut: Codable, Equatable, Sendable {
     public var modifiers: UInt32
     public static let `default` = HotKeyShortcut(
         keyCode: 1,
-        modifiers: UInt32(controlKey | optionKey | cmdKey)
-    ) // ⌃⌥⌘S
+        modifiers: UInt32(controlKey | shiftKey)
+    ) // ⌃⇧S
 }
 
 @MainActor

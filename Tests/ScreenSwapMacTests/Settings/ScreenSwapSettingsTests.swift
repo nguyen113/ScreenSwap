@@ -21,7 +21,7 @@ func settingsPersistShortcutAndLaunchPreference() {
 }
 
 @Test
-func defaultHotKeyIsDocumentedControlOptionCommandS() {
+func defaultHotKeyIsControlShiftS() {
     #expect(HotKeyShortcut.default.keyCode == 1)
-    #expect(HotKeyShortcut.default.modifiers != 0)
+    #expect(HotKeyShortcut.default.modifiers == 0x1200)
 }

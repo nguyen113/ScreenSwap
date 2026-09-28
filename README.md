@@ -49,7 +49,7 @@ must name an explicit Developer ID Application identity.
 - Right-click the menu-bar item for a fresh, read-only inventory of displays
   and windows. Select individual windows or whole display groups; spanning
   windows are shown as unavailable and never move.
-- The default global shortcut is Control–Option–Command–S. Settings lets you
+- The default global shortcut is Control–Shift–S. Settings lets you
   replace it, choose launch at login, and explicitly request Accessibility
   access. The status menu also includes an About window with the app version
   and project link.
