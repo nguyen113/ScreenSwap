@@ -4,6 +4,12 @@
 
 Use `swift test` for deterministic core logic.
 
+The macOS integration suite also runs a fake Accessibility transaction for a
+two-display Notes/Safari scenario. It verifies proportional swaps for small,
+large, medium, and tall window sizes, stable display-ID ordering, and that all
+eligible windows are read before the first mutation. Run the complete suite
+with `./build-test.sh`.
+
 Core geometry tests should cover at least:
 
 - equal-size displays

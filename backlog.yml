@@ -813,3 +813,274 @@ tasks:
   validation:
   - swift test
   - swift build
+- id: QA-BUG-001
+  title: Make click outcomes visibly observable instead of tooltip-only
+  group: qa
+  status: ready
+  depends_on: []
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  acceptance:
+  - A completed click visibly communicates success, partial failure, missing Accessibility access, and an unsupported display count without requiring the user to hover and wait for a tooltip.
+  - The menu-bar status item's icon, placement, and enabled appearance remain unchanged by the feedback.
+  - The feedback contains no window titles, document names, or other sensitive content.
+  - Unit tests verify that each SwapOutcome selects the intended visible feedback payload.
+  validation:
+  - ./build-test.sh
+- id: QA-FEATURE-001
+  title: Preserve zoomed windows and full-screen Spaces during a display swap
+  group: qa
+  status: ready
+  depends_on: []
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - The menu-bar status item remains visually and behaviorally unchanged during a swap.
+  - A standard macOS zoomed window remains zoomed after it is moved to the other display, filling that display's visible frame.
+  - A macOS full-screen Space is restored as full screen on the destination display after its window is relocated.
+  - Windows that merely resemble a maximized or full-screen frame, such as borderless/special windows, are never misclassified solely from their bounds.
+  - Unsupported application-specific Accessibility behavior is reported as a per-window failure and does not stop later moves.
+  - The implementation uses public Accessibility APIs only and has deterministic fake-based tests plus a physical two-display validation using at least Finder, a browser, and Terminal.
+  validation:
+  - ./build-test.sh
+- id: QA-SUGGEST-001
+  title: Add a non-mutating diagnostics action for setup support
+  group: qa
+  status: ready
+  depends_on: []
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  acceptance:
+  - Provide an explicit, non-mutating diagnostics action that reports Accessibility readiness and the detected active-display count.
+  - The action never enumerates or moves windows.
+  - Diagnostics use stable display IDs internally and do not expose window titles or document content.
+  validation:
+  - ./build-test.sh
+- id: QA-BUG-002
+  title: Preserve Accessibility authorization across app replacement updates
+  group: qa
+  status: ready
+  depends_on: []
+  allowed_paths:
+  - Packaging/**
+  - Sources/ScreenSwapMac/**
+  - Tests/**
+  - docs/validation/**
+  acceptance:
+  - Release/update packaging uses a stable signing identity suitable for persistent macOS Accessibility authorization; it does not silently ship an ad-hoc signature whose designated requirement is the changing CDHash.
+  - An update stops a running ScreenSwap process before replacing its app bundle and starts, or explicitly instructs the user to start, the newly installed binary.
+  - If a locally ad-hoc-signed development build is intentionally installed, the installer clearly warns that macOS may require Accessibility to be granted again after an update.
+  - The app reports an authorization failure accurately without moving windows; it never treats the System Settings toggle alone as proof that the running process is trusted.
+  - A manual regression check updates an already-authorized signed build in place and confirms the new process can swap windows without a second grant.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-BUG-003
+  title: Make zoomed/full-screen swaps round-trip stable and exclude widgets
+  group: qa
+  status: ready
+  depends_on:
+  - QA-FEATURE-001
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - Moving a zoomed or full-screen window waits for each presentation transition to complete before applying geometry or restoring the state.
+  - A second swap returns every eligible window to its pre-first-swap presentation and proportional geometry, within a documented rounding tolerance.
+  - Desktop widgets and other nonstandard auxiliary UI elements are excluded and never repositioned.
+  - If the current presentation state cannot be read reliably for an application, the window remains eligible for the normal move path and is never toggled speculatively.
+  - Automated tests cover first swap plus reverse swap, delayed or failed state transitions, and widget exclusion; physical two-display validation covers the same sequence.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-FEATURE-002
+  title: Add a right-click menu with Exit ScreenSwap
+  group: qa
+  status: ready
+  depends_on: []
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - A right-click on the ScreenSwap menu-bar item opens a native menu containing Exit ScreenSwap.
+  - Choosing Exit ScreenSwap terminates only the ScreenSwap process after the native menu action is selected.
+  - A left-click continues to invoke exactly one swap attempt and never opens the exit menu.
+  - The status item icon and placement remain unchanged.
+  - Automated tests cover menu/action routing without creating a live status item; manual validation confirms the exit action on the installed app.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-BUG-004
+  title: Keep ordinary windows eligible when AX presentation state is unreadable
+  group: qa
+  status: ready
+  depends_on:
+  - QA-BUG-003
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - A movable standard window remains eligible when its AX zoom or full-screen button exists but exposes no readable selected/value state.
+  - Unknown presentation state uses the ordinary move path and never presses a zoom or full-screen button.
+  - A capture containing only ordinary windows with unreadable presentation state yields planned moves rather than a zero-window success.
+  - Automated tests reproduce this accessibility shape and verify a non-zero normal swap; physical validation confirms ordinary windows swap again.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-FEATURE-003
+  title: Swap only frontmost-app windows and leave Stage Manager groups in place
+  group: qa
+  status: ready
+  depends_on:
+  - QA-BUG-004
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - A swap captures and plans moves only for eligible windows owned by the current frontmost application.
+  - Windows belonging to every non-frontmost application, including inactive Stage Manager groups, remain on their current display and receive no Accessibility writes.
+  - The active application is resolved once before capture; its windows are snapshotted before the first write.
+  - A missing, terminated, or unreadable frontmost application produces a safe zero-mutation result without falling back to every running application.
+  - Fake-based tests cover frontmost versus inactive applications, complete snapshotting, and proof that inactive/Stage Manager windows are never applied.
+  - Manual two-display validation covers two swaps with one active app and one Stage Manager group, verifying that only the active app swaps and the inactive group stays put.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-BUG-005
+  title: Prove swap stability across four consecutive invocations
+  group: qa
+  status: ready
+  depends_on:
+  - QA-FEATURE-003
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapCoreTests/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - Deterministic tests execute four consecutive swaps against the evolving fake Accessibility state, not four independent first-swap examples.
+  - Each invocation plans and applies the expected active-window moves; invocation two and invocation four restore the original display ownership, proportional geometry, and known presentation state within documented tolerance.
+  - The test includes a zoomed/full-screen-capable window, an ordinary window with unknown presentation state, and an inactive Stage Manager application whose windows never move across all four invocations.
+  - A failed write or presentation transition in one invocation is reported without poisoning later invocations after the coordinator guard clears.
+  - Physical validation performs four clicks with the same layouts and records results after every click.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-BUG-006
+  title: Diagnose and repair the physical second-swap failure
+  group: qa
+  status: ready
+  depends_on:
+  - QA-BUG-005
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - The installed app successfully swaps the same frontmost application's eligible windows on a second invocation after a completed first invocation.
+  - Each invocation records non-sensitive diagnostics for discovered, eligible, skipped-by-reason, planned, attempted, succeeded, and failed counts; no titles, document names, or AX identifiers are logged.
+  - A zero-move invocation is distinguished from a successful swap and reports enough safe diagnostic context to identify whether capture, filtering, planning, or applying caused it.
+  - Stateful fake tests model the post-first-swap AX values used by the second capture and cover the observed failing path.
+  - The physical two-display validation records the first and second clicks separately and is required before closing this item.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-FEATURE-004
+  title: Build a fresh display and window inventory for the status-item context menu
+  group: qa
+  status: ready
+  depends_on:
+  - QA-FEATURE-002
+  - QA-BUG-006
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - Opening the status-item context menu builds a fresh, immutable inventory of the currently active displays and discoverable top-level application windows without moving or resizing any window.
+  - Display rows are ordered by stable CGDirectDisplayID and labeled with a one-based display number plus NSScreen.localizedName, for example "1 — Built-in Retina Display"; an unavailable name falls back to "Display N" without inventing a display ID.
+  - Each discoverable, user-facing, non-spanning top-level window appears exactly once beneath the display that owns its center point, using the same Quartz-coordinate display assignment rules as the swap planner.
+  - The inventory includes top-level windows from all running applications, intentionally replacing QA-FEATURE-003's frontmost-application-only selection policy for this feature.
+  - Window labels are suitable for user identification, preferring the owning application name plus window title and using a deterministic, non-sensitive fallback when either value is unavailable; titles and document content are never logged, persisted, or used as identity keys.
+  - Non-window Accessibility elements, sheets, dialogs, popovers, transient UI, and windows whose display cannot be determined remain excluded. Discoverable minimized or non-movable top-level windows remain visible beneath their owning display but are disabled, unchecked, and marked unavailable because the existing swap eligibility rules still exclude them.
+  - Accessibility trust is checked before window enumeration. When trust is missing, the menu contains a concise disabled permission explanation and Exit ScreenSwap, makes no window reads or writes, and does not trigger the system prompt merely because the menu opened.
+  - All active displays may be described in the menu, but selection controls are disabled unless exactly two displays are active; this item does not add routing or swapping support for 0, 1, or 3+ displays.
+  - Fake-based tests cover stable display ordering and numbering, display-name fallback, window grouping, duplicate-looking window labels, missing permission, and unsupported display counts without creating a live NSStatusItem.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-FEATURE-005
+  title: Add hierarchical display and window selection state to the context menu
+  group: qa
+  status: ready
+  depends_on:
+  - QA-FEATURE-004
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - Each supported display is an actionable group row followed by its visually indented child-window rows in the same native menu, so activating the display row can toggle the group; every display and window row has a leading native selection state.
+  - A selectable window is checked when it will participate in the next swap and unchecked when it must remain at its current position and size.
+  - Selecting or deselecting a display applies the same state to every selectable child window in that display in one operation.
+  - A display row is checked when all selectable children are checked, unchecked when none are checked, and uses the native mixed state when only some children are checked; a display with no selectable children is disabled and unchecked.
+  - All newly discovered selectable windows default to checked. A user's per-window choices survive menu closing and reopening, repeated swaps, and a window moving between displays for as long as that same runtime window remains discoverable; stale state is discarded when the window disappears or its application terminates.
+  - Persisted runtime selection identity never uses a window title or document name, never assumes an AX identifier is present or unique, and does not retain stale AXUIElement-to-WindowID apply lookups beyond the capture/apply transaction.
+  - Rebuilding the menu reconciles new, removed, and moved windows without transferring an unchecked state to an unrelated window that reused a process ID, label, or optional AX identifier.
+  - Choosing a display or window menu item only changes selection. It performs no swap, Accessibility write, or permission prompt. Exit ScreenSwap remains available after the selection sections and retains its existing behavior.
+  - Fake-based tests cover child-to-parent state aggregation, mixed state, select-all, select-none, empty displays, newly discovered windows, removed windows, display reassignment, and identity collision/reuse.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-FEATURE-006
+  title: Apply context-menu selection to the next two-display swap transaction
+  group: qa
+  status: ready
+  depends_on:
+  - QA-FEATURE-005
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - A left click still starts exactly one swap request; at transaction start the coordinator freezes one selection snapshot and uses it consistently through capture, planning, and apply.
+  - Only checked, currently eligible, non-spanning windows are passed to WindowMappingEngine.makeSwapMoves; unchecked windows receive no size or position write and remain unchanged.
+  - Selecting or clearing a display affects only windows currently grouped beneath that display. It never changes the selection or geometry of windows on the other display.
+  - If every selectable window is unchecked, the request returns a distinct successful no-selection result with zero planned, attempted, succeeded, and failed moves rather than reporting a completed swap.
+  - A selected window that closes or becomes ineligible before apply is skipped or reported with a non-sensitive per-window failure, while all later selected moves are still attempted; an unrelated newly opened window is never substituted for it.
+  - Display-topology changes, missing Accessibility permission, unsupported display count, and the already-running guard preserve the existing zero-mutation behavior.
+  - The status-item tooltip reports selected, attempted, succeeded, and failed counts without window titles or document content and distinguishes no selection from no eligible windows.
+  - Fake-based tests prove unchecked windows never reach the planner or applier, checked windows on both displays swap, group selection changes the exact move set, all-unchecked is a zero-write result, and selection cannot change midway through an active transaction.
+  validation:
+  - ./build-test.sh
+  - git diff --check
+- id: QA-FEATURE-007
+  title: Present spanning windows as a non-swappable warning section
+  group: qa
+  status: ready
+  depends_on:
+  - QA-FEATURE-006
+  allowed_paths:
+  - Sources/ScreenSwapMac/**
+  - Tests/ScreenSwapMacTests/**
+  - docs/validation/**
+  acceptance:
+  - Windows with positive-area intersection across both full display frames appear in a dedicated section above the numbered display sections rather than under either display.
+  - Every spanning-window row is disabled, unchecked, and rendered with an accessible red warning treatment in both light and dark appearances; it cannot be made swappable from either the window or display controls.
+  - Above means menu ordering only. ScreenSwap does not change the desktop z-order, window level, focus, position, size, or presentation state of a spanning window.
+  - Boundary-touching windows that do not have positive-area intersection with both displays are not classified as spanning and remain selectable under their owning display.
+  - Toggling either display leaves all spanning-window rows unchanged, and a left-click swap produces no Accessibility writes for them while still moving selected non-spanning windows.
+  - The warning treatment has a non-color cue and an accessibility label/value that identifies the window as spanning and unavailable, so color is not the only indication.
+  - Automated tests cover spanning-first ordering, red warning attributes, disabled selection, boundary touching, display-toggle isolation, and zero writes; physical validation records menu appearance and swap behavior with at least one spanning and one selected non-spanning window.
+  validation:
+  - ./build-test.sh
+  - git diff --check

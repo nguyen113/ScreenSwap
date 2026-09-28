@@ -12,22 +12,42 @@ let package = Package(
             name: "ScreenSwapCore",
             targets: ["ScreenSwapCore"]
         ),
+        .library(
+            name: "ScreenSwapMac",
+            targets: ["ScreenSwapMac"]
+        ),
         .executable(
             name: "ScreenSwapApp",
             targets: ["ScreenSwapApp"]
+        ),
+        .executable(
+            name: "ScreenSwapBenchmark",
+            targets: ["ScreenSwapBenchmark"]
         )
     ],
     targets: [
         .target(
             name: "ScreenSwapCore"
         ),
+        .target(
+            name: "ScreenSwapMac",
+            dependencies: ["ScreenSwapCore"]
+        ),
         .executableTarget(
             name: "ScreenSwapApp",
-            dependencies: ["ScreenSwapCore"]
+            dependencies: ["ScreenSwapMac"]
+        ),
+        .executableTarget(
+            name: "ScreenSwapBenchmark",
+            dependencies: ["ScreenSwapMac"]
         ),
         .testTarget(
             name: "ScreenSwapCoreTests",
             dependencies: ["ScreenSwapCore"]
+        ),
+        .testTarget(
+            name: "ScreenSwapMacTests",
+            dependencies: ["ScreenSwapMac", "ScreenSwapCore"]
         )
     ]
 )
