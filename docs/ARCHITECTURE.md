@@ -15,8 +15,8 @@ No additional SwiftPM targets are introduced by this layout refactor.
 ```text
 StatusBarController --> SwapCoordinator --> AccessibilityWindowService
        |                       |             (capture, apply, verify, restore)
-       |                       +--> DisplayProviding + WindowMappingEngine
-       |                       +--> WindowSelectionStore
+       |                       +--> DisplayProviding + DisplayPairSelectionStore
+       |                       +--> WindowSelectionStore + WindowMappingEngine
        |
        +--> LiveStatusItemInventoryProvider --> read-only AX/Quartz inventory
        +--> GlobalHotKeyService --> same left-click swap action
@@ -33,11 +33,15 @@ It must not depend on Accessibility APIs or status-bar UI.
 
 1. Validate Accessibility permission.
 2. Discover active displays.
-3. Require exactly two displays.
-4. Snapshot all eligible windows.
-5. Detect windows that span both displays and exclude them from the move plan.
-6. Assign each remaining window to a source display.
-7. Compute the complete destination move plan.
+3. Reconcile and freeze exactly two selected displays. With three or more
+   physical displays, `DisplayPairSelectionStore` keeps a runtime-only pair.
+4. Snapshot windows against the complete active-display topology.
+5. Detect windows that span any active displays and exclude them from the move
+   plan; classify windows on non-pair displays as intentional routing skips.
+6. Assign each remaining window to a source display, then retain only the
+   frozen pair.
+7. Compute the complete destination move plan using the unchanged two-display
+   mapping engine.
 8. Apply every planned move, continuing after individual failures.
 9. Verify successful ordinary-window writes against both AX geometry and the
    Quartz on-screen window list.
@@ -46,7 +50,11 @@ It must not depend on Accessibility APIs or status-bar UI.
 11. Report non-sensitive counts and outcome to the status item.
 
 At transaction capture, `WindowSelectionStore` is reconciled against fresh
-`RuntimeWindowKey` values and frozen for the remainder of the transaction.
+`RuntimeWindowKey` values from the whole topology and frozen for the remainder
+of the transaction. Choices for a display outside the current pair stay in
+memory until its runtime windows disappear. `DisplayPairSelectionStore` is
+separate, process-local state: display rows choose transaction membership,
+while the `All windows` child rows choose window participation.
 Only selected captured windows reach the planner and applier. The coordinator
 also retains the complete immutable pre-swap snapshot in memory for a future
 undo feature; no AX handles persist beyond the transaction.

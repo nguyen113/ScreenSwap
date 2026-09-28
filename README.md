@@ -1,7 +1,8 @@
 # ScreenSwap
 
 ScreenSwap is a macOS 14+ menu-bar app that swaps eligible visible windows
-between exactly two active displays. It uses public Accessibility and Quartz
+between exactly two selected displays. On Macs with three or more active
+displays, choose the swap pair from the menu. It uses public Accessibility and Quartz
 APIs, plans the complete swap before the first AX write, and preserves
 proportional geometry through `ScreenSwapCore`.
 
@@ -47,8 +48,10 @@ must name an explicit Developer ID Application identity.
 - If a moved ordinary window remains absent from Quartz’s on-screen list after
   bounded verification, ScreenSwap attempts to restore its captured frame.
 - Right-click the menu-bar item for a fresh, read-only inventory of displays
-  and windows. Select individual windows or whole display groups; spanning
-  windows are shown as unavailable and never move.
+  and windows. Display rows choose the active swap pair; each selected display
+  has a separate `All windows` row plus individual window choices. Windows on
+  other displays remain visible but disabled, preserving their choices for a
+  later pair change. Spanning windows are shown as unavailable and never move.
 - The default global shortcut is Control–Shift–S. Settings lets you
   replace it, choose launch at login, and explicitly request Accessibility
   access. The status menu also includes an About window with the app version

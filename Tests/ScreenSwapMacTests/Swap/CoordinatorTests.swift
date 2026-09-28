@@ -77,6 +77,46 @@ private final class FakeWindows: WindowProviding, WindowApplying {
 }
 
 @MainActor
+private final class PairAwareFakeWindows: DisplayPairWindowProviding, WindowApplying, DisplayCandidateCounting {
+    let allWindows: [CapturedWindow]
+    let candidates: [UInt32: Int]
+    var applied: [(WindowMove, Bool)] = []
+    private(set) var selectedDisplayIDs: [UInt32] = []
+
+    init(allWindows: [CapturedWindow], candidates: [UInt32: Int]) {
+        self.allWindows = allWindows
+        self.candidates = candidates
+    }
+
+    func captureWindows(displays: [DisplaySnapshot]) -> WindowCaptureBatch {
+        WindowCaptureBatch(windows: allWindows)
+    }
+
+    func captureWindows(activeDisplays: [DisplaySnapshot], selectedDisplays: [DisplaySnapshot]) -> WindowCaptureBatch {
+        selectedDisplayIDs = selectedDisplays.map(\.id)
+        let selected = Set(selectedDisplayIDs)
+        let windows = allWindows.filter { selected.contains($0.snapshot.sourceDisplayID) }
+        let skipped = allWindows.compactMap { window -> WindowSkip? in
+            selected.contains(window.snapshot.sourceDisplayID)
+                ? nil
+                : WindowSkip(processIdentifier: window.snapshot.id.processIdentifier, reason: .unselectedDisplay)
+        }
+        return WindowCaptureBatch(
+            windows: windows,
+            skipped: skipped,
+            knownRuntimeKeys: Set(allWindows.compactMap(\.runtimeKey))
+        )
+    }
+
+    func candidateCounts(activeDisplays: [DisplaySnapshot]) -> [UInt32: Int] { candidates }
+
+    func apply(move: WindowMove, isResizable: Bool) -> WindowApplyResult {
+        applied.append((move, isResizable))
+        return .success
+    }
+}
+
+@MainActor
 private final class FakeNotVisibleVerifier: WindowVerifying {
     let clock: RollbackClock
 
@@ -178,8 +218,8 @@ func coordinatorChecksTrustBeforeDisplaysAndWritesNothingWithoutPermission() {
 
 @Test
 @MainActor
-func coordinatorRejectsEveryUnsupportedDisplayCountBeforeCapture() {
-    for count in [0, 1, 3] {
+func coordinatorRejectsOnlyFewerThanTwoDisplaysBeforeCapture() {
+    for count in [0, 1] {
         let windows = FakeWindows()
         let coordinator = SwapCoordinator(
             authorization: FakeAuthorizer(trusted: true),
@@ -481,4 +521,100 @@ func coordinatorDoesNotSubstituteAWindowThatAppearsAfterSelectionFreeze() {
     #expect(coordinator.swap() == .success(attempted: 1, succeeded: 1))
     #expect(planner.plannedWindows.map(\.id) == [window.snapshot.id])
     #expect(windows.applied.map { $0.0.windowID } == [window.snapshot.id])
+}
+
+@Test
+@MainActor
+func coordinatorSwapsOnlyFrozenPairWhenThreeDisplaysAreActive() {
+    let displayValues = displays(count: 3)
+    let pairStore = DisplayPairSelectionStore()
+    pairStore.reconcile(
+        activeDisplays: displayValues,
+        primaryDisplayID: 1,
+        candidateCounts: [1: 3, 2: 2, 3: 1]
+    )
+    pairStore.select(
+        displayID: 3,
+        activeDisplays: displayValues,
+        primaryDisplayID: 1,
+        candidateCounts: [1: 3, 2: 2, 3: 1]
+    )
+    let onFirst = captured("on-first")
+    let onSecond = CapturedWindow(
+        snapshot: WindowSnapshot(
+            id: WindowID(processIdentifier: 10, accessibilityIdentifier: "on-second"),
+            sourceDisplayID: 2,
+            frame: CGRect(x: 1_100, y: 100, width: 300, height: 200)
+        ),
+        isResizable: true
+    )
+    let onThird = CapturedWindow(
+        snapshot: WindowSnapshot(
+            id: WindowID(processIdentifier: 10, accessibilityIdentifier: "on-third"),
+            sourceDisplayID: 3,
+            frame: CGRect(x: 2_100, y: 100, width: 300, height: 200)
+        ),
+        isResizable: true
+    )
+    let planner = FakePlanner(log: EventLog(), moves: [
+        WindowMove(windowID: onFirst.snapshot.id, destinationDisplayID: 3, frame: .zero),
+        WindowMove(windowID: onThird.snapshot.id, destinationDisplayID: 1, frame: .zero)
+    ])
+    let windows = PairAwareFakeWindows(
+        allWindows: [onFirst, onSecond, onThird],
+        candidates: [1: 3, 2: 2, 3: 1]
+    )
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displayValues),
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        displaySelection: pairStore
+    )
+
+    #expect(coordinator.swap() == .success(attempted: 2, succeeded: 2))
+    #expect(windows.selectedDisplayIDs == [1, 3])
+    #expect(planner.plannedWindows.map(\.sourceDisplayID).sorted() == [1, 3])
+    #expect(!windows.applied.contains { $0.0.windowID == onSecond.snapshot.id })
+    #expect(coordinator.lastDiagnostics.skippedByReason[WindowSkipReason.unselectedDisplay.rawValue] == 1)
+}
+
+@Test
+@MainActor
+func coordinatorDoesNotRerouteWhenDisplayPairChangesAfterCapture() {
+    let displayValues = displays(count: 3)
+    let pairStore = DisplayPairSelectionStore()
+    pairStore.reconcile(activeDisplays: displayValues, primaryDisplayID: 1, candidateCounts: [1: 3, 2: 2, 3: 1])
+    pairStore.select(displayID: 3, activeDisplays: displayValues, primaryDisplayID: 1, candidateCounts: [1: 3, 2: 2, 3: 1])
+    let first = captured("first")
+    let third = CapturedWindow(
+        snapshot: WindowSnapshot(
+            id: WindowID(processIdentifier: 10, accessibilityIdentifier: "third"),
+            sourceDisplayID: 3,
+            frame: CGRect(x: 2_100, y: 100, width: 300, height: 200)
+        ),
+        isResizable: true
+    )
+    let planner = FakePlanner(log: EventLog(), moves: [
+        WindowMove(windowID: first.snapshot.id, destinationDisplayID: 3, frame: .zero),
+        WindowMove(windowID: third.snapshot.id, destinationDisplayID: 1, frame: .zero)
+    ])
+    planner.onPlan = {
+        pairStore.select(displayID: 2, activeDisplays: displayValues, primaryDisplayID: 1, candidateCounts: [1: 3, 2: 2, 3: 1])
+    }
+    let windows = PairAwareFakeWindows(allWindows: [first, third], candidates: [1: 3, 2: 2, 3: 1])
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displayValues),
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        displaySelection: pairStore
+    )
+
+    #expect(coordinator.swap() == .success(attempted: 2, succeeded: 2))
+    #expect(windows.selectedDisplayIDs == [1, 3])
+    #expect(windows.applied.map { $0.0.destinationDisplayID }.sorted() == [1, 3])
+    #expect(pairStore.frozenPair() == [3, 2])
 }

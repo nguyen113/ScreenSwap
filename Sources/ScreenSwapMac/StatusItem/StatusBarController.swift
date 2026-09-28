@@ -1,4 +1,5 @@
 import AppKit
+import ScreenSwapCore
 
 public struct StatusItemFeedback: Equatable, Sendable {
     public let title: String
@@ -21,7 +22,7 @@ public enum StatusItemFeedbackCatalog {
         case let .unsupportedDisplayCount(count):
             return StatusItemFeedback(
                 title: "ScreenSwap",
-                message: "ScreenSwap requires exactly two displays; found \(count)."
+                message: "ScreenSwap requires at least two active displays; found \(count)."
             )
         case let .success(attempted, succeeded):
             return StatusItemFeedback(
@@ -116,6 +117,10 @@ public final class StatusItemClickRouter {
             return .menu
         }
     }
+
+    public func presentMenu(from button: NSStatusBarButton?) {
+        menuPresenter.present(from: button)
+    }
 }
 
 @MainActor
@@ -136,17 +141,20 @@ public final class LiveStatusItemInventoryProvider: StatusItemInventoryProviding
     private let displays: any DisplayProviding
     private let namedDisplays: (any DisplayInventoryProviding)?
     private let windows: any WindowInventoryProviding
+    private let displaySelection: DisplayPairSelectionStore
 
     public init(
         authorization: any AccessibilityAuthorizing,
         displays: any DisplayProviding,
         namedDisplays: (any DisplayInventoryProviding)? = nil,
-        windows: any WindowInventoryProviding
+        windows: any WindowInventoryProviding,
+        displaySelection: DisplayPairSelectionStore
     ) {
         self.authorization = authorization
         self.displays = displays
         self.namedDisplays = namedDisplays
         self.windows = windows
+        self.displaySelection = displaySelection
     }
 
     public func currentInventory() -> WindowInventory {
@@ -161,7 +169,29 @@ public final class LiveStatusItemInventoryProvider: StatusItemInventoryProviding
         } else {
             inventoryDisplays = []
         }
-        return windows.inventory(displays: inventoryDisplays)
+        let rawInventory = windows.inventory(displays: inventoryDisplays)
+        let activeDisplays = inventoryDisplays.map(\.snapshot)
+        let candidateCounts = rawInventory.windows.reduce(into: [UInt32: Int]()) { counts, window in
+            guard let displayID = window.displayID,
+                  !window.isSpanning,
+                  window.isSelectable || window.isAutomaticallyIncluded else { return }
+            counts[displayID, default: 0] += 1
+        }
+        let primaryDisplayID = (displays as? any PrimaryDisplayProviding)?.primaryDisplayID()
+            ?? activeDisplays.map(\.id).min()
+        if let primaryDisplayID {
+            displaySelection.reconcile(
+                activeDisplays: activeDisplays,
+                primaryDisplayID: primaryDisplayID,
+                candidateCounts: candidateCounts
+            )
+        }
+        return WindowInventory(
+            displays: inventoryDisplays,
+            windows: rawInventory.windows,
+            selectedDisplayIDs: displaySelection.selectedDisplayIDs,
+            primaryDisplayID: primaryDisplayID
+        )
     }
 }
 
@@ -182,6 +212,7 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
     private let authorization: (any AccessibilityAuthorizing)?
     private let inventoryProvider: (any StatusItemInventoryProviding)?
     private let selection: WindowSelectionStore?
+    private let displaySelection: DisplayPairSelectionStore?
     private let shortcutRegistration: ((HotKeyShortcut) -> Bool)?
 
     public init(
@@ -190,6 +221,7 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         authorization: (any AccessibilityAuthorizing)? = nil,
         inventoryProvider: (any StatusItemInventoryProviding)? = nil,
         selection: WindowSelectionStore? = nil,
+        displaySelection: DisplayPairSelectionStore? = nil,
         shortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil
     ) {
         self.terminator = terminator
@@ -197,6 +229,7 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         self.authorization = authorization
         self.inventoryProvider = inventoryProvider
         self.selection = selection
+        self.displaySelection = displaySelection
         self.shortcutRegistration = shortcutRegistration
         menu = NSMenu()
         super.init()
@@ -236,7 +269,7 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         selection?.reconcile(selectableKeys)
         if !inventory.supportsSelection {
             let item = NSMenuItem(
-                title: "Selection requires exactly two displays (found \(inventory.displays.count))",
+                title: "Swap requires at least two active displays (found \(inventory.displays.count))",
                 action: nil,
                 keyEquivalent: ""
             )
@@ -264,29 +297,58 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
             }
         }
 
+        let activeDisplays = inventory.displays.map(\.snapshot)
+        let candidateCounts = inventory.windows.reduce(into: [UInt32: Int]()) { counts, window in
+            guard let displayID = window.displayID,
+                  !window.isSpanning,
+                  window.isSelectable || window.isAutomaticallyIncluded else { return }
+            counts[displayID, default: 0] += 1
+        }
+        let primaryDisplayID = inventory.primaryDisplayID ?? activeDisplays.map(\.id).min() ?? 0
         for display in inventory.displays {
             if !menu.items.isEmpty { menu.addItem(.separator()) }
             let children = inventory.windows(on: display.snapshot.id)
             let keys = Set(children.compactMap { $0.isSelectable ? $0.key : nil })
-            let group = NSMenuItem(title: display.label, action: #selector(toggleGroup(_:)), keyEquivalent: "")
+            let isSelectedDisplay = inventory.isDisplaySelected(display.snapshot.id)
+            let displayItem = NSMenuItem(title: display.label, action: #selector(toggleDisplay(_:)), keyEquivalent: "")
+            displayItem.target = self
+            displayItem.representedObject = DisplaySelectionMenuPayload(
+                displayID: display.snapshot.id,
+                activeDisplays: activeDisplays,
+                primaryDisplayID: primaryDisplayID,
+                candidateCounts: candidateCounts
+            )
+            displayItem.state = isSelectedDisplay ? .on : .off
+            // Pair membership cannot be reduced to one. Choose an unchecked
+            // display to replace a pair member instead.
+            displayItem.isEnabled = inventory.displays.count > 2 && !isSelectedDisplay
+            if isSelectedDisplay && inventory.displays.count > 2 {
+                displayItem.toolTip = "Choose another display to replace this member of the swap pair."
+            }
+            menu.addItem(displayItem)
+
+            let group = NSMenuItem(title: "    All windows", action: #selector(toggleGroup(_:)), keyEquivalent: "")
             group.target = self
             group.representedObject = SelectionMenuPayload(keys: keys)
             group.state = menuState(selection?.selectionState(for: keys) ?? .on)
-            group.isEnabled = inventory.supportsSelection && !keys.isEmpty
+            group.isEnabled = inventory.supportsSelection && isSelectedDisplay && !keys.isEmpty
+            if !isSelectedDisplay { group.toolTip = "Select this display to change its windows." }
             menu.addItem(group)
             for child in children {
                 let title = child.isAutomaticallyIncluded
-                    ? "    \(child.label) — included automatically"
-                    : "    \(child.label)"
+                    ? "        \(child.label) — included automatically"
+                    : "        \(child.label)"
                 let item = NSMenuItem(title: title, action: #selector(toggleWindow(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = child.key.map { SelectionMenuPayload(keys: [$0]) }
-                item.state = child.isAutomaticallyIncluded
+                item.state = child.isAutomaticallyIncluded && isSelectedDisplay
                     ? .on
                     : child.key.map { menuState(selection?.selectionState(for: [$0]) ?? .on) } ?? .off
-                item.isEnabled = inventory.supportsSelection && child.isSelectable && child.key != nil
-                if child.isAutomaticallyIncluded {
+                item.isEnabled = inventory.supportsSelection && isSelectedDisplay && child.isSelectable && child.key != nil
+                if child.isAutomaticallyIncluded && isSelectedDisplay {
                     item.toolTip = "Included automatically; no Quartz window identity is available for selection."
+                } else if child.isAutomaticallyIncluded {
+                    item.toolTip = "Select this display to include this native full-screen window."
                 } else if !item.isEnabled {
                     item.toolTip = "Unavailable for swapping"
                 }
@@ -310,6 +372,17 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
               !payload.keys.isEmpty else { return }
         let state = selection?.selectionState(for: payload.keys) ?? .off
         selection?.setSelected(state != .on, for: payload.keys)
+        rebuildMenu()
+    }
+
+    @objc private func toggleDisplay(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? DisplaySelectionMenuPayload else { return }
+        displaySelection?.select(
+            displayID: payload.displayID,
+            activeDisplays: payload.activeDisplays,
+            primaryDisplayID: payload.primaryDisplayID,
+            candidateCounts: payload.candidateCounts
+        )
         rebuildMenu()
     }
 
@@ -353,6 +426,26 @@ private final class SelectionMenuPayload: NSObject {
 }
 
 @MainActor
+private final class DisplaySelectionMenuPayload: NSObject {
+    let displayID: UInt32
+    let activeDisplays: [DisplaySnapshot]
+    let primaryDisplayID: UInt32
+    let candidateCounts: [UInt32: Int]
+
+    init(
+        displayID: UInt32,
+        activeDisplays: [DisplaySnapshot],
+        primaryDisplayID: UInt32,
+        candidateCounts: [UInt32: Int]
+    ) {
+        self.displayID = displayID
+        self.activeDisplays = activeDisplays
+        self.primaryDisplayID = primaryDisplayID
+        self.candidateCounts = candidateCounts
+    }
+}
+
+@MainActor
 public final class StatusItemActionHandler {
     private let coordinator: SwapCoordinator
     private let authorization: any AccessibilityAuthorizing
@@ -383,7 +476,7 @@ public final class StatusItemActionHandler {
             }
             tooltip = "ScreenSwap: grant Accessibility access, then click again."
         case let .unsupportedDisplayCount(count):
-            tooltip = "ScreenSwap: requires exactly two displays (found \(count))."
+            tooltip = "ScreenSwap: requires at least two active displays (found \(count))."
         case let .success(attempted, succeeded):
             tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed 0."
         case let .partialFailure(attempted, succeeded, failed):
@@ -415,7 +508,7 @@ public final class StatusItemActionHandler {
             }
             tooltip = "ScreenSwap: grant Accessibility access, then click again."
         case let .unsupportedDisplayCount(count):
-            tooltip = "ScreenSwap: requires exactly two displays (found \(count))."
+            tooltip = "ScreenSwap: requires at least two active displays (found \(count))."
         case let .success(attempted, succeeded):
             tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed 0."
         case let .partialFailure(attempted, succeeded, failed):
@@ -528,6 +621,7 @@ public final class StatusBarController: NSObject {
         settings: ScreenSwapSettings? = nil,
         inventoryProvider: (any StatusItemInventoryProviding)? = nil,
         selection: WindowSelectionStore? = nil,
+        displaySelection: DisplayPairSelectionStore? = nil,
         shortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil,
         feedbackPresenter: any StatusItemFeedbackPresenting = StatusPopoverFeedbackPresenter()
     ) {
@@ -539,6 +633,7 @@ public final class StatusBarController: NSObject {
             authorization: authorization,
             inventoryProvider: inventoryProvider,
             selection: selection,
+            displaySelection: displaySelection,
             shortcutRegistration: shortcutRegistration
         ))
         super.init()
@@ -611,11 +706,14 @@ public final class StatusBarController: NSObject {
         iconAnimation.beganSwap()
         Task { @MainActor [weak self] in
             guard let self else { return }
-            _ = await actionHandler.handleMeasuredClick(commandReceivedNanoseconds: commandReceived)
+            let outcome = await actionHandler.handleMeasuredClick(commandReceivedNanoseconds: commandReceived)
             feedbackPresenter.present(actionHandler.feedback, from: statusItem.button)
             statusItem.button?.toolTip = actionHandler.tooltip
             statusItem.button?.isEnabled = actionHandler.isEnabled
             iconAnimation.endedSwap()
+            if case .unsupportedDisplayCount = outcome {
+                clickRouter.presentMenu(from: statusItem.button)
+            }
         }
     }
 }

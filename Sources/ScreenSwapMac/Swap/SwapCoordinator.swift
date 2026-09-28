@@ -13,6 +13,7 @@ public final class SwapCoordinator {
     private let clock: any MonotonicTimeSource
     private let performanceRecorder: (any SwapPerformanceRecording)?
     private let selection: (any SwapSelectionProviding)?
+    private let displaySelection: DisplayPairSelectionStore
     private var isRunning = false
     public private(set) var lastDiagnostics = SwapDiagnostics.empty
     /// Transaction-local AX handles are deliberately not retained. This is the
@@ -28,6 +29,7 @@ public final class SwapCoordinator {
         planner: any SwapPlanning = WindowMappingEngine(),
         windowVerifier: (any WindowVerifying)? = nil,
         selection: (any SwapSelectionProviding)? = nil,
+        displaySelection: DisplayPairSelectionStore = DisplayPairSelectionStore(),
         clock: any MonotonicTimeSource = MachContinuousTimeSource(),
         performanceRecorder: (any SwapPerformanceRecording)? = nil
     ) {
@@ -41,6 +43,7 @@ public final class SwapCoordinator {
         self.clock = clock
         self.performanceRecorder = performanceRecorder
         self.selection = selection
+        self.displaySelection = displaySelection
     }
 
     public func swap() -> SwapOutcome {
@@ -63,17 +66,18 @@ public final class SwapCoordinator {
             lastDiagnostics = .empty
             return .unsupportedDisplayCount(0)
         }
-        guard currentDisplays.count == 2 else {
+        guard currentDisplays.count >= 2 else {
             lastDiagnostics = .empty
             return .unsupportedDisplayCount(currentDisplays.count)
         }
 
-        let orderedDisplays = currentDisplays.sorted { $0.id < $1.id }
-        let displayA = orderedDisplays[0]
-        let displayB = orderedDisplays[1]
-        let batch = windowProvider.captureWindows(displays: [displayA, displayB])
+        guard let (displayA, displayB) = frozenPair(from: currentDisplays) else {
+            lastDiagnostics = .empty
+            return .unsupportedDisplayCount(currentDisplays.count)
+        }
+        let batch = capture(activeDisplays: currentDisplays, selectedDisplays: [displayA, displayB])
         latestPreSwapSnapshots = batch.windows.map(\.snapshot)
-        selection?.reconcile(Set(batch.windows.compactMap(\.runtimeKey)))
+        selection?.reconcile(batch.knownRuntimeKeys)
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
             guard let selectedKeys else { return true }
@@ -186,7 +190,7 @@ public final class SwapCoordinator {
                 verified: false, timedOut: false
             )
         }
-        guard currentDisplays.count == 2 else {
+        guard currentDisplays.count >= 2 else {
             lastDiagnostics = .empty
             let now = clock.nowNanoseconds()
             return finishMeasured(
@@ -197,12 +201,19 @@ public final class SwapCoordinator {
             )
         }
 
-        let orderedDisplays = currentDisplays.sorted { $0.id < $1.id }
-        let displayA = orderedDisplays[0]
-        let displayB = orderedDisplays[1]
-        let batch = windowProvider.captureWindows(displays: [displayA, displayB])
+        guard let (displayA, displayB) = frozenPair(from: currentDisplays) else {
+            lastDiagnostics = .empty
+            let now = clock.nowNanoseconds()
+            return finishMeasured(
+                outcome: .unsupportedDisplayCount(currentDisplays.count),
+                t0: t0, t1: now, t2: now, t3: now, t4: now, t5: now,
+                total: 0, eligible: 0, skipped: 0, skipReasons: [:], attempted: 0, succeeded: 0, failed: 0,
+                verified: false, timedOut: false
+            )
+        }
+        let batch = capture(activeDisplays: currentDisplays, selectedDisplays: [displayA, displayB])
         latestPreSwapSnapshots = batch.windows.map(\.snapshot)
-        selection?.reconcile(Set(batch.windows.compactMap(\.runtimeKey)))
+        selection?.reconcile(batch.knownRuntimeKeys)
         let t1 = clock.nowNanoseconds()
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
@@ -282,6 +293,48 @@ public final class SwapCoordinator {
             attempted: moves.count, succeeded: succeeded, failed: failed,
             verified: !moves.isEmpty && failed == 0 && verification.didVerify, timedOut: verification.timedOut
         )
+    }
+
+    /// Selects exactly two displays once per transaction. The returned values
+    /// are held locally, so later menu changes cannot reroute in-flight moves.
+    private func frozenPair(from activeDisplays: [DisplaySnapshot]) -> (DisplaySnapshot, DisplaySnapshot)? {
+        let primaryDisplayID = (displays as? any PrimaryDisplayProviding)?.primaryDisplayID()
+            ?? activeDisplays.map(\.id).min()
+            ?? 0
+        let candidateCounts: [UInt32: Int]
+        if activeDisplays.count > 2 {
+            candidateCounts = (windowProvider as? any DisplayCandidateCounting)?
+                .candidateCounts(activeDisplays: activeDisplays) ?? [:]
+        } else {
+            candidateCounts = [:]
+        }
+        displaySelection.reconcile(
+            activeDisplays: activeDisplays,
+            primaryDisplayID: primaryDisplayID,
+            candidateCounts: candidateCounts
+        )
+        let ids = displaySelection.frozenPair()
+        guard ids.count == 2,
+              let displayA = activeDisplays.first(where: { $0.id == ids[0] }),
+              let displayB = activeDisplays.first(where: { $0.id == ids[1] }) else {
+            return nil
+        }
+        return (displayA, displayB)
+    }
+
+    private func capture(
+        activeDisplays: [DisplaySnapshot],
+        selectedDisplays: [DisplaySnapshot]
+    ) -> WindowCaptureBatch {
+        if let pairProvider = windowProvider as? any DisplayPairWindowProviding {
+            return pairProvider.captureWindows(
+                activeDisplays: activeDisplays,
+                selectedDisplays: selectedDisplays
+            )
+        }
+        // Compatibility seam for lightweight fakes and third-party adapters.
+        // The live service always receives the complete topology above.
+        return windowProvider.captureWindows(displays: selectedDisplays)
     }
 
     private func verify(_ candidates: [(WindowMove, Bool)]) async -> (unverifiedIDs: Set<WindowID>, notVisibleIDs: Set<WindowID>, didVerify: Bool, timedOut: Bool) {

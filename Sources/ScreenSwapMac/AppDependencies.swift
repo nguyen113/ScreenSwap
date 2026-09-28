@@ -9,6 +9,7 @@ struct AppDependencies {
     let displayProvider: LiveDisplayProvider
     let windowService: AccessibilityWindowService
     let selectionStore: WindowSelectionStore
+    let displayPairSelectionStore: DisplayPairSelectionStore
     let settings: ScreenSwapSettings
     let menuInventory: LiveStatusItemInventoryProvider
     let coordinator: SwapCoordinator
@@ -21,12 +22,14 @@ struct AppDependencies {
             inventoryClient: LiveAccessibilityClient()
         )
         let selectionStore = WindowSelectionStore()
+        let displayPairSelectionStore = DisplayPairSelectionStore()
         let settings = ScreenSwapSettings()
         let menuInventory = LiveStatusItemInventoryProvider(
             authorization: authorization,
             displays: displayProvider,
             namedDisplays: displayProvider,
-            windows: windowService
+            windows: windowService,
+            displaySelection: displayPairSelectionStore
         )
         let coordinator = SwapCoordinator(
             authorization: authorization,
@@ -36,6 +39,7 @@ struct AppDependencies {
             windowRestorer: windowService,
             windowVerifier: windowService,
             selection: selectionStore,
+            displaySelection: displayPairSelectionStore,
             performanceRecorder: SwapPerformanceLogger(isEnabled: {
                 #if DEBUG
                 true
@@ -49,6 +53,7 @@ struct AppDependencies {
             displayProvider: displayProvider,
             windowService: windowService,
             selectionStore: selectionStore,
+            displayPairSelectionStore: displayPairSelectionStore,
             settings: settings,
             menuInventory: menuInventory,
             coordinator: coordinator
