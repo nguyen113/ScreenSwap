@@ -29,11 +29,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func captureDiagnostics() {
-        guard let dependencies, dependencies.authorization.isTrusted,
-              let displays = try? dependencies.displayProvider.currentDisplays() else {
+        guard let dependencies else { return }
+
+        // Enable the process-local diagnostics route even before Accessibility
+        // is granted. A later authorized capture in this process must retain
+        // the user's explicit diagnostics request.
+        dependencies.windowService.enableDiagnostics()
+
+        guard dependencies.authorization.isTrusted,
+          let displays = try? dependencies.displayProvider.currentDisplays() else {
             return
         }
-        dependencies.windowService.enableDiagnostics()
         _ = dependencies.windowService.captureWindows(displays: displays)
     }
 }
