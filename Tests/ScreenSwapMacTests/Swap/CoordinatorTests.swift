@@ -412,6 +412,31 @@ func coordinatorReturnsNoSelectionWithoutPlanningOrWriting() {
 
 @Test
 @MainActor
+func coordinatorIncludesAXConfirmedNativeFullScreenWindowWithoutQuartzRuntimeKey() {
+    let window = captured(
+        "native-full-screen-without-quartz-key",
+        presentationState: WindowPresentationState(isFullScreen: true, canToggleFullScreen: true)
+    )
+    let move = WindowMove(windowID: window.snapshot.id, destinationDisplayID: 2, frame: .zero)
+    let planner = FakePlanner(log: EventLog(), moves: [move])
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        selection: WindowSelectionStore()
+    )
+
+    #expect(coordinator.swap() == .success(attempted: 1, succeeded: 1))
+    #expect(planner.plannedWindows.map(\.id) == [window.snapshot.id])
+    #expect(windows.applied.map { $0.0.windowID } == [window.snapshot.id])
+    #expect(coordinator.lastDiagnostics.selected == 1)
+}
+
+@Test
+@MainActor
 func coordinatorDefaultsAWindowFirstSeenAtCaptureToSelected() {
     let key = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
     let window = captured("new-at-capture", runtimeKey: key)

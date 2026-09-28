@@ -144,6 +144,40 @@ func statusTooltipReportsSelectedAttemptedSucceededAndFailedCounts() {
 
 @Test
 @MainActor
+func noSelectionTooltipIncludesZeroCounts() {
+    let key = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
+    let snapshot = WindowSnapshot(
+        id: WindowID(processIdentifier: 10, accessibilityIdentifier: "unchecked"),
+        sourceDisplayID: 1,
+        frame: CGRect(x: 50, y: 50, width: 100, height: 100)
+    )
+    let selection = WindowSelectionStore()
+    selection.reconcile([key])
+    selection.setSelected(false, for: key)
+    let windows = StatusFakeWindows(batch: WindowCaptureBatch(windows: [
+        CapturedWindow(snapshot: snapshot, isResizable: true, runtimeKey: key)
+    ]))
+    let displays = StatusFakeDisplays(values: [
+        DisplaySnapshot(id: 1, frame: CGRect(x: 0, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: 0, y: 0, width: 500, height: 500)),
+        DisplaySnapshot(id: 2, frame: CGRect(x: 500, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: 500, y: 0, width: 500, height: 500))
+    ])
+    let handler = StatusItemActionHandler(
+        coordinator: SwapCoordinator(
+            authorization: StatusFakeAuthorizer(trusted: true),
+            displays: displays,
+            windowProvider: windows,
+            windowApplying: windows,
+            selection: selection
+        ),
+        authorization: StatusFakeAuthorizer(trusted: true)
+    )
+
+    #expect(handler.handleClick() == .noSelection)
+    #expect(handler.tooltip == "ScreenSwap: no selection — selected 0, attempted 0, succeeded 0, failed 0.")
+}
+
+@Test
+@MainActor
 func statusItemExitMenuContainsNativeActionThatTerminatesOnlyScreenSwap() {
     let terminator = StatusFakeTerminator()
     let menuController = StatusItemMenuController(terminator: terminator)
@@ -165,6 +199,7 @@ func statusMenuBuildsFreshDisplayGroupsSelectionAndSpanningWarning() {
     let inventory = WindowInventory(displays: displays, windows: [
         InventoryWindow(key: firstKey, displayID: 1, label: "Finder — Desktop", isSelectable: true, isSpanning: false),
         InventoryWindow(key: secondKey, displayID: 2, label: "Terminal — Shell", isSelectable: true, isSpanning: false),
+        InventoryWindow(key: nil, displayID: 2, label: "Safari — Full Screen", isSelectable: false, isAutomaticallyIncluded: true, isSpanning: false),
         InventoryWindow(key: nil, displayID: nil, label: "Browser — Wide", isSelectable: false, isSpanning: true)
     ])
     let selection = WindowSelectionStore()
@@ -179,6 +214,9 @@ func statusMenuBuildsFreshDisplayGroupsSelectionAndSpanningWarning() {
     #expect(menuController.menu.items.map(\.title).contains("Display 2"))
     let warning = menuController.menu.items.first { $0.title.contains("spanning, unavailable") }
     #expect(warning?.isEnabled == false)
+    let automaticallyIncluded = menuController.menu.items.first { $0.title.contains("included automatically") }
+    #expect(automaticallyIncluded?.state == .on)
+    #expect(automaticallyIncluded?.isEnabled == false)
     let group = menuController.menu.items.first { $0.title == "1 — Built-in" }!
     #expect(group.state == .on)
     menuController.perform(NSSelectorFromString("toggleGroup:"), with: group)

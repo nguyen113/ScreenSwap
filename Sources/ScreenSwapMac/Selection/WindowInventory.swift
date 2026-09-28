@@ -10,11 +10,23 @@ public struct InventoryWindow: Equatable, Sendable {
     public let displayID: UInt32?
     public let label: String
     public let isSelectable: Bool
+    /// AX-confirmed windows without a Quartz window number cannot safely carry
+    /// a persistent per-window choice. Eligible instances remain part of the
+    /// swap transaction by default and are shown as included automatically.
+    public let isAutomaticallyIncluded: Bool
     public let isSpanning: Bool
 
-    public init(key: RuntimeWindowKey?, displayID: UInt32?, label: String, isSelectable: Bool, isSpanning: Bool) {
+    public init(
+        key: RuntimeWindowKey?,
+        displayID: UInt32?,
+        label: String,
+        isSelectable: Bool,
+        isAutomaticallyIncluded: Bool = false,
+        isSpanning: Bool
+    ) {
         self.key = key; self.displayID = displayID; self.label = label
         self.isSelectable = isSelectable; self.isSpanning = isSpanning
+        self.isAutomaticallyIncluded = isAutomaticallyIncluded
     }
 }
 

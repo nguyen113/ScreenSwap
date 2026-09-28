@@ -275,12 +275,21 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
             group.isEnabled = inventory.supportsSelection && !keys.isEmpty
             menu.addItem(group)
             for child in children {
-                let item = NSMenuItem(title: "    \(child.label)", action: #selector(toggleWindow(_:)), keyEquivalent: "")
+                let title = child.isAutomaticallyIncluded
+                    ? "    \(child.label) — included automatically"
+                    : "    \(child.label)"
+                let item = NSMenuItem(title: title, action: #selector(toggleWindow(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = child.key.map { SelectionMenuPayload(keys: [$0]) }
-                item.state = child.key.map { menuState(selection?.selectionState(for: [$0]) ?? .on) } ?? .off
+                item.state = child.isAutomaticallyIncluded
+                    ? .on
+                    : child.key.map { menuState(selection?.selectionState(for: [$0]) ?? .on) } ?? .off
                 item.isEnabled = inventory.supportsSelection && child.isSelectable && child.key != nil
-                if !item.isEnabled { item.toolTip = "Unavailable for swapping" }
+                if child.isAutomaticallyIncluded {
+                    item.toolTip = "Included automatically; no Quartz window identity is available for selection."
+                } else if !item.isEnabled {
+                    item.toolTip = "Unavailable for swapping"
+                }
                 menu.addItem(item)
             }
         }
@@ -382,7 +391,7 @@ public final class StatusItemActionHandler {
         case .noMoves:
             tooltip = "ScreenSwap: no eligible windows were planned."
         case .noSelection:
-            tooltip = "ScreenSwap: no windows are selected."
+            tooltip = "ScreenSwap: no selection — selected 0, attempted 0, succeeded 0, failed 0."
         case .alreadyRunning:
             tooltip = "ScreenSwap: a swap is already running."
         }
@@ -414,7 +423,7 @@ public final class StatusItemActionHandler {
         case .noMoves:
             tooltip = "ScreenSwap: no eligible windows were planned."
         case .noSelection:
-            tooltip = "ScreenSwap: no windows are selected."
+            tooltip = "ScreenSwap: no selection — selected 0, attempted 0, succeeded 0, failed 0."
         case .alreadyRunning:
             tooltip = "ScreenSwap: a swap is already running."
         }

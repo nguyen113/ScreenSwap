@@ -77,7 +77,10 @@ public final class SwapCoordinator {
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
             guard let selectedKeys else { return true }
-            return window.runtimeKey.map { selectedKeys.contains($0) } ?? false
+            // Native full-screen Spaces can be AX-confirmed while Quartz omits
+            // their window number. They have no safe persistent selection key,
+            // so preserve their default-included swap behavior.
+            return window.runtimeKey.map { selectedKeys.contains($0) } ?? true
         }
         if selectedKeys != nil && selectedWindows.isEmpty && !batch.windows.isEmpty {
             lastDiagnostics = makeDiagnostics(
@@ -204,7 +207,7 @@ public final class SwapCoordinator {
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
             guard let selectedKeys else { return true }
-            return window.runtimeKey.map { selectedKeys.contains($0) } ?? false
+            return window.runtimeKey.map { selectedKeys.contains($0) } ?? true
         }
         if selectedKeys != nil && selectedWindows.isEmpty && !batch.windows.isEmpty {
             let now = clock.nowNanoseconds()

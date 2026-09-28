@@ -104,6 +104,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                         ordinal: ordinal
                     ),
                     isSelectable: !isSpanning && isEligible && key != nil,
+                    isAutomaticallyIncluded: !isSpanning && isEligible && key == nil,
                     isSpanning: isSpanning
                 ))
             }
