@@ -1,83 +1,126 @@
 # ScreenSwap
 
-ScreenSwap is a macOS 14+ menu-bar app that swaps eligible visible windows
-between exactly two selected displays. On Macs with three or more active
-displays, choose the swap pair from the menu. It uses public Accessibility and Quartz
-APIs, plans the complete swap before the first AX write, and preserves
-proportional geometry through `ScreenSwapCore`.
+[![Support ScreenSwap on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C3N027TX55)
 
-## Purpose
+ScreenSwap is a macOS menu-bar app for moving windows between two selected
+displays in one action. It is designed for people who regularly switch their
+working layout between a laptop display and external monitors.
 
-This repository is also an independently implemented benchmark reference. Use
-it as:
+On a Mac with three or more displays, choose the two displays that form the
+active swap pair; all other displays remain untouched. ScreenSwap is built on
+public macOS Accessibility and Quartz APIs and keeps its geometry planning in a
+small, deterministic Swift core.
 
-- an independent behavioral reference
-- a code-quality comparison
-- a sanity check for the external black-box evaluator
+## Highlights
 
-Do **not** treat its ChatGPT task cost as a measured API cost unless separate API telemetry exists.
+- Swaps visible eligible windows across applications—not only the frontmost app.
+- Supports two-display swaps on any active display topology; choose the active
+  pair from the menu when three or more displays are connected.
+- Lets you include or exclude individual windows, or use an `All windows` row
+  for each selected display.
+- Preserves proportional placement across displays with different resolutions,
+  aspect ratios, and usable areas.
+- Protects spanning, minimized, transient, non-movable, and off-screen windows.
+- Preserves fixed-size windows and verifies writes after a move; if a moved
+  window remains unavailable on its macOS Space, ScreenSwap attempts to restore
+  its prior frame.
+- Includes a configurable global shortcut (default: Control–Shift–S),
+  Accessibility onboarding, optional launch at login, About, and Reduce Motion
+  aware hover feedback.
 
-## Support ScreenSwap
+## Requirements
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C3N027TX55)
+- macOS 14 or later
+- Accessibility permission for ScreenSwap
+- At least two active displays
 
-## Build and test
+## Use ScreenSwap
 
-On macOS:
+1. Launch ScreenSwap and grant Accessibility access when prompted.
+2. With two displays, they are automatically the active swap pair.
+3. With three or more displays, right-click the menu-bar item and select an
+   unchecked display to replace a member of the pair.
+4. Use the `All windows` row or individual window rows to choose which windows
+   move. Window choices are retained while a display is outside the active pair.
+5. Left-click the menu-bar item or press Control–Shift–S to swap the selected
+   windows between the active pair.
+
+Display checkmarks choose *which monitors participate*. The nested window
+checkmarks choose *which windows participate*. A window on an unselected
+display is shown but disabled; it will not be moved.
+
+## Safety and behavior
+
+ScreenSwap snapshots eligible windows and plans the complete transaction before
+the first Accessibility write. It rechecks display IDs and geometry before
+mutation, and aborts without moving anything if the display topology changed
+during the operation.
+
+The app intentionally does not implement three-way rotation or general
+N-display routing. Every transaction remains a normal two-display swap.
+
+macOS does not provide a reliable public API for moving arbitrary foreign-app
+windows between Spaces. Native full-screen behavior and Space visibility should
+therefore be validated on your own setup.
+
+## Build from source
 
 ```bash
+git clone https://github.com/nguyen113/ScreenSwap-Gpt.git
+cd ScreenSwap-Gpt
 ./build-test.sh
 ```
 
-After any app update, install and launch a fresh release build for local
-testing:
+To package, install, and launch a local build:
 
 ```bash
 Packaging/pack-app.sh --install --replace
 ```
 
-If no local stable signing identity exists, create one once with
-`Packaging/create-local-signing-identity.sh`. Ad-hoc signing is opt-in with
-`--allow-ad-hoc` and may require Accessibility approval again. Release packages
-must name an explicit Developer ID Application identity.
-
-## Current behavior and limitations
-
-- Swaps all currently visible, eligible standard windows across applications;
-  it intentionally does not use a frontmost-app-only policy.
-- Minimized, transient, non-movable, spanning, and Quartz-offscreen windows
-  are skipped.
-- Fixed-size windows keep their captured size and their destination position is
-  clamped using that real size.
-- If a moved ordinary window remains absent from Quartz’s on-screen list after
-  bounded verification, ScreenSwap attempts to restore its captured frame.
-- Right-click the menu-bar item for a fresh, read-only inventory of displays
-  and windows. Display rows choose the active swap pair; each selected display
-  has a separate `All windows` row plus individual window choices. Windows on
-  other displays remain visible but disabled, preserving their choices for a
-  later pair change. Spanning windows are shown as unavailable and never move.
-- The default global shortcut is Control–Shift–S. Settings lets you
-  replace it, choose launch at login, and explicitly request Accessibility
-  access. The status menu also includes an About window with the app version
-  and project link, plus a Ko-fi support button.
-- Hover feedback respects the macOS Reduce Motion preference. The latest
-  immutable pre-swap geometry is retained in memory as the seam for a future
-  undo command; it does not yet expose undo UI.
-- Public APIs cannot reliably transfer arbitrary foreign windows between macOS
-  Spaces. Physical two-display validation remains required.
-
-## Black-box validation
-
-The ZIP containing this repo also contains a sibling `_blackbox/` directory.
-
-From the extracted package:
+The script uses a stable local signing identity when one is available. If you
+need to create one first, run:
 
 ```bash
-./_blackbox/run-blackbox.sh ./ScreenSwap-GPT56Reference
+Packaging/create-local-signing-identity.sh
 ```
 
-The packaged reference was verified against the external suite before delivery.
+Ad-hoc signing is opt-in (`--allow-ad-hoc`) and may require granting
+Accessibility access again. Release packages must use an explicit Developer ID
+Application identity.
 
-## Public contract
+## Development
 
-`docs/CORE_PUBLIC_API.md` fixes the public interface only. The external test vectors remain outside this Git repo.
+`ScreenSwapCore` contains pure display/window geometry and the unchanged
+two-display mapping engine. `ScreenSwapMac` contains the Accessibility,
+display-discovery, selection, status-item, settings, and hotkey adapters.
+
+Run the complete automated suite with:
+
+```bash
+./build-test.sh
+```
+
+The tests use Swift Testing and fakes for Accessibility and display services;
+they do not replace physical validation with real displays and Accessibility
+permission. See [the architecture notes](docs/ARCHITECTURE.md) for transaction
+and selection-state details.
+
+## Contributing
+
+Issues and pull requests are welcome. Please keep changes focused, preserve the
+two-display transaction boundary, add deterministic regression coverage for
+behavior changes, and run `./build-test.sh` plus `git diff --check` before
+opening a pull request.
+
+## Support
+
+If ScreenSwap saves you a little desktop shuffling, you can support its
+development on Ko-fi:
+
+[![Support ScreenSwap on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C3N027TX55)
+
+## Reference material
+
+- [Core public API](docs/CORE_PUBLIC_API.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [GitHub project](https://github.com/nguyen113/ScreenSwap-Gpt)
