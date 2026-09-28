@@ -1,5 +1,18 @@
 # First-click swap validation
 
+## Automated baseline history
+
+Revision: b2590fc
+Date: 2026-09-28
+Result: 71 / 71 tests passed
+Command: `./build-test.sh`
+`git diff --check`: PASS
+
+The historical validation entries below retain the test counts current when
+those runs were performed. The current working tree adds fixed-size placement
+and Space-visibility rollback coverage; its 2026-09-28 run reports 75 / 75
+tests passed.
+
 Status: **AX transaction validated; visual mixed-mode acceptance blocked by macOS Space assignment**
 
 The automated suite validates the complete fake-based transaction and reports

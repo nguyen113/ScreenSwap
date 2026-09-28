@@ -235,9 +235,20 @@ public protocol WindowApplying: AnyObject {
     func apply(move: WindowMove, isResizable: Bool) -> WindowApplyResult
 }
 
+/// Restores a captured window after a completed AX write cannot be verified
+/// as visible on the active macOS Space. Handles remain transaction-local.
+public protocol WindowRestoring: AnyObject {
+    @MainActor
+    func restore(windowID: WindowID, isResizable: Bool) -> WindowApplyResult
+}
+
 public enum WindowVerificationStatus: Equatable, Sendable {
     case verified
     case pending
+    /// AX geometry matches, but Quartz no longer reports the window on screen.
+    /// This is distinct from ordinary AX propagation lag so the coordinator can
+    /// return the window to its captured frame after the verification deadline.
+    case notVisible
     case unavailable
 }
 

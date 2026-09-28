@@ -16,6 +16,9 @@ private final class FakeAccessibilityClient: AccessibilityClient {
     var failingWindowEnumeration: Set<Int32> = []
     var failingAttributeReads: Set<String> = []
     var failingSizeWrites = false
+    /// Simulates macOS rejecting a resize that exceeds the current display's
+    /// available size while the window center is still on that display.
+    var sizeLimitAtCurrentCenter: (frame: CGRect, maximumSize: CGSize)?
     var ignoresSizeWritesUntilZoom = false
     var sizeWriteHeightAdjustment: CGFloat = 0
     var failingPositionWrites = false
@@ -102,6 +105,15 @@ private final class FakeAccessibilityClient: AccessibilityClient {
         writeEvents.append("size:\(window.token):\(size.width)x\(size.height)")
         if failingSizeWrites { throw AccessibilityClientError.writeFailed }
         if ignoresSizeWritesUntilZoom { return }
+        if let limit = sizeLimitAtCurrentCenter,
+           let current = attributesByToken[window.token],
+           limit.frame.contains(CGPoint(
+                x: current.position.x + current.size.width / 2,
+                y: current.position.y + current.size.height / 2
+           )),
+           (size.width > limit.maximumSize.width || size.height > limit.maximumSize.height) {
+            return
+        }
         if !deferGeometryUpdates {
             updateGeometry(
                 window.token,
@@ -222,6 +234,7 @@ private let serviceDisplays = [
 
 private func serviceAttributes(
     position: CGPoint = CGPoint(x: 100, y: 100),
+    size: CGSize = CGSize(width: 300, height: 200),
     role: String = "AXWindow",
     subrole: String? = nil,
     minimized: Bool = false,
@@ -234,7 +247,7 @@ private func serviceAttributes(
         subrole: subrole,
         isMinimized: minimized,
         position: position,
-        size: CGSize(width: 300, height: 200),
+        size: size,
         positionIsSettable: movable,
         sizeIsSettable: resizable,
         presentationState: presentationState
@@ -408,6 +421,34 @@ func accessibilityServiceWritesSizeBeforePositionAndSkipsSizeForFixedWindow() {
 
 @Test
 @MainActor
+func accessibilityServiceClampsFixedWindowUsingCapturedSize() {
+    let client = FakeAccessibilityClient()
+    let fixed = AccessibilityWindowHandle(token: "fixed-near-edge")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [fixed]
+    client.attributesByToken[fixed.token] = serviceAttributes(
+        position: CGPoint(x: 100, y: 100),
+        size: CGSize(width: 600, height: 400),
+        resizable: false
+    )
+
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: serviceDisplays)
+    let move = WindowMove(
+        windowID: batch.windows[0].snapshot.id,
+        destinationDisplayID: 2,
+        // The planner's scaled frame fits at this origin, but the real fixed
+        // window does not. AX must receive an origin clamped for 600x400.
+        frame: CGRect(x: 1_750, y: 750, width: 300, height: 200)
+    )
+
+    #expect(service.apply(move: move, isResizable: false) == .success)
+    #expect(client.writeEvents == ["position:fixed-near-edge:1400.0,400.0"])
+    #expect(service.verificationStatus(for: move, isResizable: false, tolerance: 2) == .verified)
+}
+
+@Test
+@MainActor
 func accessibilityServiceDispatchesPositionWhenAXGeometryReadbackIsDelayed() {
     let client = FakeAccessibilityClient()
     let handle = AccessibilityWindowHandle(token: "delayed-geometry")
@@ -455,7 +496,87 @@ func accessibilityServiceDoesNotVerifyWindowHiddenInAnotherSpace() {
     // Simulate macOS retaining the AX geometry while the window remains in an
     // inactive Space and is therefore absent from the on-screen Quartz list.
     client.visibleWindowValues = []
-    #expect(service.verificationStatus(for: move, isResizable: true, tolerance: 2) == .pending)
+    #expect(service.verificationStatus(for: move, isResizable: true, tolerance: 2) == .notVisible)
+}
+
+@Test
+@MainActor
+func accessibilityServiceRestoresCapturedFrameAfterSpaceVisibilityFailure() {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "restore-after-space-failure")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes(
+        position: CGPoint(x: 100, y: 120),
+        size: CGSize(width: 320, height: 240)
+    )
+
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: serviceDisplays)
+    let id = batch.windows[0].snapshot.id
+    let move = WindowMove(
+        windowID: id,
+        destinationDisplayID: 2,
+        frame: CGRect(x: 1_250, y: 200, width: 400, height: 300)
+    )
+    #expect(service.apply(move: move, isResizable: true) == .success)
+
+    client.visibleWindowValues = []
+    #expect(service.verificationStatus(for: move, isResizable: true, tolerance: 2) == .notVisible)
+    #expect(service.restore(windowID: id, isResizable: true) == .success)
+    #expect(client.writeEvents.suffix(2) == [
+        "size:restore-after-space-failure:320.0x240.0",
+        "position:restore-after-space-failure:100.0,120.0"
+    ])
+    let restored = try? client.attributes(for: handle)
+    #expect(restored?.position == CGPoint(x: 100, y: 120))
+    #expect(restored?.size == CGSize(width: 320, height: 240))
+}
+
+@Test
+@MainActor
+func accessibilityServiceRestoresLargeFrameByReturningToSourceBeforeResize() {
+    let source = DisplaySnapshot(
+        id: 1,
+        frame: CGRect(x: 0, y: 0, width: 1_920, height: 1_000),
+        visibleFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_000)
+    )
+    let destination = DisplaySnapshot(
+        id: 2,
+        frame: CGRect(x: 1_920, y: 0, width: 1_280, height: 800),
+        visibleFrame: CGRect(x: 1_920, y: 0, width: 1_280, height: 800)
+    )
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "large-rollback")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes(
+        position: CGPoint(x: 100, y: 50),
+        size: CGSize(width: 1_600, height: 900)
+    )
+    client.sizeLimitAtCurrentCenter = (
+        frame: destination.visibleFrame,
+        maximumSize: CGSize(width: 1_280, height: 800)
+    )
+
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: [source, destination])
+    let id = batch.windows[0].snapshot.id
+    let failedMove = WindowMove(
+        windowID: id,
+        destinationDisplayID: destination.id,
+        frame: CGRect(x: 2_020, y: 40, width: 1_066, height: 720)
+    )
+    #expect(service.apply(move: failedMove, isResizable: true) == .success)
+    #expect(service.restore(windowID: id, isResizable: true) == .success)
+    #expect(client.writeEvents.suffix(3) == [
+        "position:large-rollback:100.0,50.0",
+        "size:large-rollback:1600.0x900.0",
+        "position:large-rollback:100.0,50.0"
+    ])
+    let restored = try? client.attributes(for: handle)
+    #expect(restored?.position == CGPoint(x: 100, y: 50))
+    #expect(restored?.size == CGSize(width: 1_600, height: 900))
 }
 
 @Test

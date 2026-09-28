@@ -1,20 +1,14 @@
-# ScreenSwap — GPT-5.6 Sol Reference
+# ScreenSwap
 
-This repository is an independently implemented reference for the first seven atomic MVP core tasks:
-
-- `MVP-CORE-001`
-- `MVP-CORE-002`
-- `MVP-CORE-003`
-- `MVP-CORE-004`
-- `MVP-CORE-005`
-- `MVP-CORE-006`
-- `MVP-CORE-007`
-
-It uses the same starter product models, same `backlog.yml`, and same visible `docs/CORE_PUBLIC_API.md` contract as the CGAW and direct-Claude benchmark arms.
+ScreenSwap is a macOS 14+ menu-bar app that swaps eligible visible windows
+between exactly two active displays. It uses public Accessibility and Quartz
+APIs, plans the complete swap before the first AX write, and preserves
+proportional geometry through `ScreenSwapCore`.
 
 ## Purpose
 
-Use this repo as:
+This repository is also an independently implemented benchmark reference. Use
+it as:
 
 - an independent behavioral reference
 - a code-quality comparison
@@ -22,16 +16,38 @@ Use this repo as:
 
 Do **not** treat its ChatGPT task cost as a measured API cost unless separate API telemetry exists.
 
-## Visible validation
+## Build and test
 
 On macOS:
 
 ```bash
-swift build
-swift test
+./build-test.sh
 ```
 
-Core-only package validation can also be performed through the external evaluator.
+After any app update, install and launch a fresh release build for local
+testing:
+
+```bash
+Packaging/pack-app.sh --install --replace
+```
+
+If no local stable signing identity exists, create one once with
+`Packaging/create-local-signing-identity.sh`. Ad-hoc signing is opt-in with
+`--allow-ad-hoc` and may require Accessibility approval again. Release packages
+must name an explicit Developer ID Application identity.
+
+## Current behavior and limitations
+
+- Swaps all currently visible, eligible standard windows across applications;
+  it intentionally does not use a frontmost-app-only policy.
+- Minimized, transient, non-movable, spanning, and Quartz-offscreen windows
+  are skipped.
+- Fixed-size windows keep their captured size and their destination position is
+  clamped using that real size.
+- If a moved ordinary window remains absent from Quartz’s on-screen list after
+  bounded verification, ScreenSwap attempts to restore its captured frame.
+- Public APIs cannot reliably transfer arbitrary foreign windows between macOS
+  Spaces. Physical two-display validation remains required.
 
 ## Black-box validation
 

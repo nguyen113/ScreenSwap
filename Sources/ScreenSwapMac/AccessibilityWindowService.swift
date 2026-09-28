@@ -4,7 +4,7 @@ import os
 import ScreenSwapCore
 
 @MainActor
-public final class AccessibilityWindowService: WindowProviding, WindowApplying, WindowVerifying {
+public final class AccessibilityWindowService: WindowProviding, WindowApplying, WindowRestoring, WindowVerifying {
     private static let diagnosticLogger = Logger(subsystem: "com.screenswap.app", category: "diagnostics")
     private let client: any AccessibilityClient
     private let processIdentifier: Int32
@@ -64,6 +64,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
         var totalWindows = 0
         var nextLookup: [WindowID: AccessibilityWindowHandle] = [:]
         var nextPresentationStates: [WindowID: WindowPresentationState] = [:]
+        var nextSourceFrames: [WindowID: CGRect] = [:]
         var nextVisuallyMaximizedWindowIDs: Set<WindowID> = []
         var nextMaximizedWindowNumbers: Set<UInt32> = []
         var geometryMaximizedCount = 0
@@ -224,6 +225,10 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                 )
                 nextLookup[id] = handle
                 nextPresentationStates[id] = attributes.presentationState
+                // Preserve the actual AX geometry for a later position-only
+                // restore. `snapshotFrame` may be canonicalized to express a
+                // maximized layout intent and must not replace this value.
+                nextSourceFrames[id] = frame
                 if isVisuallyMaximized {
                     nextVisuallyMaximizedWindowIDs.insert(id)
                 }
@@ -239,7 +244,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
         visuallyMaximizedWindowIDs = nextVisuallyMaximizedWindowIDs
         maximizedWindowNumbers = nextMaximizedWindowNumbers
         displaysByID = Dictionary(uniqueKeysWithValues: displays.map { ($0.id, $0) })
-        sourceFrames = Dictionary(uniqueKeysWithValues: captured.map { ($0.snapshot.id, $0.snapshot.frame) })
+        sourceFrames = nextSourceFrames
         sourceDisplayIDs = Dictionary(uniqueKeysWithValues: captured.map { ($0.snapshot.id, $0.snapshot.sourceDisplayID) })
         diagnosticWindowOrdinals = Dictionary(
             uniqueKeysWithValues: captured.enumerated().map { ($0.element.snapshot.id, $0.offset + 1) }
@@ -400,19 +405,10 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
             zoomIsTemporarilyExited = true
         }
 
-        let destinationFrame: CGRect
-        if wasFullScreen,
-           let destinationDisplay = displaysByID[move.destinationDisplayID] {
-            // Native full-screen does not respect the destination's dock or
-            // menu-bar inset. Anchor the temporary window to the complete
-            // target display before restoring its native full-screen state.
-            destinationFrame = destinationDisplay.frame
-        } else if (wasZoomed || wasVisuallyMaximized),
-           let destinationDisplay = displaysByID[move.destinationDisplayID] {
-            destinationFrame = destinationDisplay.visibleFrame
-        } else {
-            destinationFrame = move.frame
-        }
+        let destinationFrame = resolvedDestinationFrame(
+            for: move,
+            isResizable: isResizable
+        )
         recordDiagnostic(
             "[ScreenSwapApply] ordinal=\(diagnosticWindowOrdinals[move.windowID] ?? 0) destination=\(move.destinationDisplayID) requested=\(format(destinationFrame)) resizable=\(isResizable) visual_maximized=\(wasVisuallyMaximized) zoom=\(format(presentation.isZoomed))"
         )
@@ -535,6 +531,109 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
         return .success
     }
 
+    /// Resolves the actual frame requested from AX. The core planner correctly
+    /// uses scaled geometry, while this adapter alone knows whether a window
+    /// can resize. Fixed-size windows therefore keep their captured size and
+    /// have their planner-selected origin clamped against that real size.
+    private func resolvedDestinationFrame(
+        for move: WindowMove,
+        isResizable: Bool
+    ) -> CGRect {
+        let presentation = presentationStates[move.windowID] ?? .unknown
+
+        if presentation.isFullScreen == true,
+           let destination = displaysByID[move.destinationDisplayID] {
+            // Native full-screen does not respect the destination's dock or
+            // menu-bar inset. Anchor the temporary window to the complete
+            // target display before restoring its native full-screen state.
+            return destination.frame
+        }
+
+        if presentation.isZoomed == true ||
+            visuallyMaximizedWindowIDs.contains(move.windowID),
+           let destination = displaysByID[move.destinationDisplayID] {
+            return destination.visibleFrame
+        }
+
+        guard !isResizable,
+              let sourceFrame = sourceFrames[move.windowID],
+              let destination = displaysByID[move.destinationDisplayID] else {
+            return move.frame
+        }
+
+        return clampPositionOnly(
+            CGRect(origin: move.frame.origin, size: sourceFrame.size),
+            to: destination.visibleFrame
+        )
+    }
+
+    private func clampPositionOnly(_ frame: CGRect, to visibleFrame: CGRect) -> CGRect {
+        let maxX = max(visibleFrame.minX, visibleFrame.maxX - frame.width)
+        let maxY = max(visibleFrame.minY, visibleFrame.maxY - frame.height)
+        return CGRect(
+            x: min(max(frame.minX, visibleFrame.minX), maxX),
+            y: min(max(frame.minY, visibleFrame.minY), maxY),
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
+    public func restore(windowID: WindowID, isResizable: Bool) -> WindowApplyResult {
+        func failure(_ kind: WindowApplyFailureKind) -> WindowApplyResult {
+            recordDiagnostic(
+                "[ScreenSwapRollback] ordinal=\(diagnosticWindowOrdinals[windowID] ?? 0) result=failed phase=\(kind.rawValue)"
+            )
+            return WindowApplyResult(succeeded: false, failure: kind)
+        }
+        guard let handle = lookup[windowID],
+              let sourceFrame = sourceFrames[windowID] else {
+            return failure(.staleWindow)
+        }
+
+        let presentation = presentationStates[windowID] ?? .unknown
+        let wasZoomed = presentation.isZoomed == true
+        guard !wasZoomed || presentation.canToggleZoom else {
+            return failure(.zoom)
+        }
+        if wasZoomed, !transitionZoom(handle, to: false) {
+            return failure(.zoom)
+        }
+
+        if isResizable {
+            // The failed move may have left this window on a smaller display.
+            // Cross back first, before asking AX to restore a source size that
+            // does not fit there. This mirrors `apply`'s move-before-growing
+            // rule and avoids a clamped or discarded rollback resize.
+            do {
+                try client.setPosition(sourceFrame.origin, for: handle)
+            } catch {
+                if wasZoomed { _ = transitionZoom(handle, to: true) }
+                return failure(.position)
+            }
+            do {
+                try client.setSize(sourceFrame.size, for: handle)
+            } catch {
+                if wasZoomed { _ = transitionZoom(handle, to: true) }
+                return failure(.size)
+            }
+        }
+        do {
+            // Resizing can change the allowed origin, so always finish with a
+            // final source position after the size request.
+            try client.setPosition(sourceFrame.origin, for: handle)
+        } catch {
+            if wasZoomed { _ = transitionZoom(handle, to: true) }
+            return failure(.position)
+        }
+        if wasZoomed, !transitionZoom(handle, to: true) {
+            return failure(.zoom)
+        }
+        recordDiagnostic(
+            "[ScreenSwapRollback] ordinal=\(diagnosticWindowOrdinals[windowID] ?? 0) result=restored"
+        )
+        return .success
+    }
+
     private func transitionZoom(_ handle: AccessibilityWindowHandle, to expected: Bool) -> Bool {
         let ordinal = diagnosticOrdinal(for: handle)
         recordDiagnostic("[ScreenSwapTransition] ordinal=\(ordinal) kind=zoom expected=\(expected) phase=action")
@@ -602,14 +701,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
             )
             return stateMatches && destinationMatches ? .verified : .pending
         }
-        let expected: CGRect
-        if presentationStates[move.windowID]?.isZoomed == true ||
-            visuallyMaximizedWindowIDs.contains(move.windowID),
-           let destination = displaysByID[move.destinationDisplayID] {
-            expected = destination.visibleFrame
-        } else {
-            expected = move.frame
-        }
+        let expected = resolvedDestinationFrame(for: move, isResizable: isResizable)
         let positionMatches = abs(actual.origin.x - expected.origin.x) <= tolerance &&
             abs(actual.origin.y - expected.origin.y) <= tolerance
         let sizeMatches = !isResizable || (
@@ -637,7 +729,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                 "[ScreenSwapVerification] ordinal=\(diagnosticWindowOrdinals[move.windowID] ?? 0) result=not_visible"
             )
         }
-        return isVisible ? .verified : .pending
+        return isVisible ? .verified : .notVisible
     }
 
     private func recordDiagnostic(_ message: @autoclosure () -> String) {
