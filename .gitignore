@@ -1,4 +1,9 @@
-.swiftpm
-.build
-/dist/
 .DS_Store
+.build/
+DerivedData/
+.swiftpm/
+*.xcuserstate
+xcuserdata/
+.env
+.env.*
+/dist/

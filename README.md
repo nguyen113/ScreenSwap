@@ -11,6 +11,12 @@ active swap pair; all other displays remain untouched. ScreenSwap is built on
 public macOS Accessibility and Quartz APIs and keeps its geometry planning in a
 small, deterministic Swift core.
 
+## Project status
+
+ScreenSwap is an early macOS release. It is useful for its supported
+two-display workflow, but physical validation across different displays, apps,
+and macOS Spaces is still important before relying on it in a critical setup.
+
 ## Highlights
 
 - Swaps visible eligible windows across applications—not only the frontmost app.
@@ -66,8 +72,8 @@ therefore be validated on your own setup.
 ## Build from source
 
 ```bash
-git clone https://github.com/nguyen113/ScreenSwap-Gpt.git
-cd ScreenSwap-Gpt
+git clone https://github.com/nguyen113/ScreenSwap-Mac.git
+cd ScreenSwap-Mac
 ./build-test.sh
 ```
 
@@ -88,6 +94,20 @@ Ad-hoc signing is opt-in (`--allow-ad-hoc`) and may require granting
 Accessibility access again. Release packages must use an explicit Developer ID
 Application identity.
 
+GitHub releases currently provide source archives. A notarized distributable
+application bundle is not yet provided for every release.
+
+## Report bugs
+
+Use the [bug report template](https://github.com/nguyen113/ScreenSwap-Mac/issues/new?template=bug_report.yml)
+for unexpected behavior and the [feature request template](https://github.com/nguyen113/ScreenSwap-Mac/issues/new?template=feature_request.yml)
+for ideas. Include the app version, macOS version, display count, selected
+displays, and reproduction steps—but never window titles, document contents,
+credentials, or other sensitive desktop information.
+
+For security issues, follow the private reporting guidance in
+[SECURITY.md](SECURITY.md) instead of opening a public issue.
+
 ## Development
 
 `ScreenSwapCore` contains pure display/window geometry and the unchanged
@@ -107,7 +127,8 @@ and selection-state details.
 
 ## Contributing
 
-Issues and pull requests are welcome. Please keep changes focused, preserve the
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the development workflow. Please keep changes focused, preserve the
 two-display transaction boundary, add deterministic regression coverage for
 behavior changes, and run `./build-test.sh` plus `git diff --check` before
 opening a pull request.
@@ -119,8 +140,14 @@ development on Ko-fi:
 
 [![Support ScreenSwap on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/C3N027TX55)
 
+## License
+
+ScreenSwap is released under the MIT License.
+
+See [LICENSE](LICENSE) for details.
+
 ## Reference material
 
 - [Core public API](docs/CORE_PUBLIC_API.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [GitHub project](https://github.com/nguyen113/ScreenSwap-Gpt)
+- [GitHub project](https://github.com/nguyen113/ScreenSwap-Mac)
