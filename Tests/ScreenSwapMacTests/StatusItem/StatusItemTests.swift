@@ -122,6 +122,28 @@ func statusItemRoutesRightClickToMenuAndLeftClickToExactlyOneSwapAction() {
 
 @Test
 @MainActor
+func statusTooltipReportsSelectedAttemptedSucceededAndFailedCounts() {
+    let snapshot = WindowSnapshot(
+        id: WindowID(processIdentifier: 10, accessibilityIdentifier: "window"),
+        sourceDisplayID: 1,
+        frame: CGRect(x: 50, y: 50, width: 100, height: 100)
+    )
+    let windows = StatusFakeWindows(batch: WindowCaptureBatch(windows: [CapturedWindow(snapshot: snapshot, isResizable: true)]))
+    let displays = StatusFakeDisplays(values: [
+        DisplaySnapshot(id: 1, frame: CGRect(x: 0, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: 0, y: 0, width: 500, height: 500)),
+        DisplaySnapshot(id: 2, frame: CGRect(x: 500, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: 500, y: 0, width: 500, height: 500))
+    ])
+    let handler = StatusItemActionHandler(
+        coordinator: SwapCoordinator(authorization: StatusFakeAuthorizer(trusted: true), displays: displays, windowProvider: windows, windowApplying: windows),
+        authorization: StatusFakeAuthorizer(trusted: true)
+    )
+
+    #expect(handler.handleClick() == .success(attempted: 1, succeeded: 1))
+    #expect(handler.tooltip == "ScreenSwap: selected 1, attempted 1, succeeded 1, failed 0.")
+}
+
+@Test
+@MainActor
 func statusItemExitMenuContainsNativeActionThatTerminatesOnlyScreenSwap() {
     let terminator = StatusFakeTerminator()
     let menuController = StatusItemMenuController(terminator: terminator)
@@ -184,12 +206,16 @@ private final class StatusFakeAuthorizer: AccessibilityAuthorizing {
 
 @MainActor
 private final class StatusFakeDisplays: DisplayProviding {
-    func currentDisplays() throws -> [DisplaySnapshot] { [] }
+    var values: [DisplaySnapshot]
+    init(values: [DisplaySnapshot] = []) { self.values = values }
+    func currentDisplays() throws -> [DisplaySnapshot] { values }
 }
 
 @MainActor
 private final class StatusFakeWindows: WindowProviding, WindowApplying {
-    func captureWindows(displays: [DisplaySnapshot]) -> WindowCaptureBatch { WindowCaptureBatch(windows: []) }
+    var batch: WindowCaptureBatch
+    init(batch: WindowCaptureBatch = WindowCaptureBatch(windows: [])) { self.batch = batch }
+    func captureWindows(displays: [DisplaySnapshot]) -> WindowCaptureBatch { batch }
     func apply(move: WindowMove, isResizable: Bool) -> WindowApplyResult { .success }
 }
 

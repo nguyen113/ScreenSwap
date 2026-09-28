@@ -440,6 +440,7 @@ func fourStatefulSwapsRoundTripActiveWindowsAndLeaveInactiveStageManagerUntouche
         #expect(fixture.coordinator.lastDiagnostics == SwapDiagnostics(
             discovered: 3,
             eligible: 2,
+            selected: 2,
             skippedByReason: ["notVisible": 1],
             planned: 2,
             attempted: 2,
@@ -622,6 +623,7 @@ func fourSwapsRetainFourQuarterScreenTiles() {
     #expect(coordinator.lastDiagnostics == SwapDiagnostics(
         discovered: 4,
         eligible: 4,
+        selected: 4,
         planned: 4,
         attempted: 4,
         succeeded: 4,

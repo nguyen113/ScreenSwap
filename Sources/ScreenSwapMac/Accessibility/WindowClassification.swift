@@ -9,8 +9,6 @@ public struct AccessibilityWindowAttributes: Equatable, Sendable {
     public let positionIsSettable: Bool
     public let sizeIsSettable: Bool
     public let presentationState: WindowPresentationState
-    /// Presentation-only label data for the status-item menu.
-    public let title: String?
 
     public init(
         role: String,
@@ -20,8 +18,7 @@ public struct AccessibilityWindowAttributes: Equatable, Sendable {
         size: CGSize,
         positionIsSettable: Bool,
         sizeIsSettable: Bool,
-        presentationState: WindowPresentationState = .unknown,
-        title: String? = nil
+        presentationState: WindowPresentationState = .unknown
     ) {
         self.role = role
         self.subrole = subrole
@@ -31,7 +28,6 @@ public struct AccessibilityWindowAttributes: Equatable, Sendable {
         self.positionIsSettable = positionIsSettable
         self.sizeIsSettable = sizeIsSettable
         self.presentationState = presentationState
-        self.title = title
     }
 }
 

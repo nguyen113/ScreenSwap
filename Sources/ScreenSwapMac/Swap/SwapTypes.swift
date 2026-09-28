@@ -172,6 +172,8 @@ public struct WindowApplyResult: Equatable, Sendable {
 public struct SwapDiagnostics: Equatable, Sendable {
     public let discovered: Int
     public let eligible: Int
+    /// Captured eligible windows selected for this transaction before planning.
+    public let selected: Int
     public let skippedByReason: [String: Int]
     public let planned: Int
     public let attempted: Int
@@ -181,6 +183,7 @@ public struct SwapDiagnostics: Equatable, Sendable {
     public init(
         discovered: Int = 0,
         eligible: Int = 0,
+        selected: Int = 0,
         skippedByReason: [String: Int] = [:],
         planned: Int = 0,
         attempted: Int = 0,
@@ -189,6 +192,7 @@ public struct SwapDiagnostics: Equatable, Sendable {
     ) {
         self.discovered = discovered
         self.eligible = eligible
+        self.selected = selected
         self.skippedByReason = skippedByReason
         self.planned = planned
         self.attempted = attempted

@@ -100,7 +100,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                     displayID: displayID,
                     label: WindowInventoryClassifier.label(
                         applicationName: application.localizedName,
-                        title: attributes.title,
+                        title: try? reader.title(for: handle),
                         ordinal: ordinal
                     ),
                     isSelectable: !isSpanning && isEligible && key != nil,

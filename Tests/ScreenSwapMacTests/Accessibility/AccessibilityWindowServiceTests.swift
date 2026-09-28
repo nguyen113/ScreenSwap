@@ -15,6 +15,8 @@ private final class FakeAccessibilityClient: AccessibilityClient {
     var attributesByToken: [String: AccessibilityWindowAttributes] = [:]
     var failingWindowEnumeration: Set<Int32> = []
     var failingAttributeReads: Set<String> = []
+    var titlesByToken: [String: String?] = [:]
+    var failingTitleReads: Set<String> = []
     var failingSizeWrites = false
     /// Simulates macOS rejecting a resize that exceeds the current display's
     /// available size while the window center is still on that display.
@@ -78,6 +80,13 @@ private final class FakeAccessibilityClient: AccessibilityClient {
             throw AccessibilityClientError.attributeReadFailed
         }
         return attributes
+    }
+
+    func title(for window: AccessibilityWindowHandle) throws -> String? {
+        if failingTitleReads.contains(window.token) {
+            throw AccessibilityClientError.attributeReadFailed
+        }
+        return titlesByToken[window.token] ?? nil
     }
 
     func advanceTransitions() {
@@ -281,6 +290,36 @@ func accessibilityServiceSnapshotsEligibleWindowsWithoutWriting() {
     #expect(client.applicationsCallCount == 1)
     #expect(client.visibleWindowsCallCount == 1)
     #expect(client.writeEvents.isEmpty)
+}
+
+@Test
+@MainActor
+func unreadableWindowTitleDoesNotAffectSwapCaptureAndUsesInventoryFallback() {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "title-unreadable")
+    let application = AccessibilityApplication(processIdentifier: 100, localizedName: "Finder")
+    client.appValues = [application]
+    client.handlesByPID[application.processIdentifier] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes()
+    client.failingTitleReads.insert(handle.token)
+    client.visibleWindowValues = [
+        VisibleWindowSnapshot(
+            processIdentifier: application.processIdentifier,
+            frame: CGRect(x: 100, y: 100, width: 300, height: 200),
+            windowNumber: 42
+        )
+    ]
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+
+    let batch = service.captureWindows(displays: serviceDisplays)
+    #expect(batch.windows.count == 1)
+    #expect(batch.failures.isEmpty)
+
+    let inventory = service.inventory(displays: serviceDisplays.enumerated().map {
+        InventoryDisplay(snapshot: $0.element, ordinal: $0.offset + 1, name: nil)
+    })
+    #expect(inventory.windows.map(\.label) == ["Finder — Window 1"])
+    #expect(inventory.windows.first?.isSelectable == true)
 }
 
 @Test

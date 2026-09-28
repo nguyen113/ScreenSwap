@@ -376,9 +376,9 @@ public final class StatusItemActionHandler {
         case let .unsupportedDisplayCount(count):
             tooltip = "ScreenSwap: requires exactly two displays (found \(count))."
         case let .success(attempted, succeeded):
-            tooltip = "ScreenSwap: swapped \(succeeded) of \(attempted) window(s)."
+            tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed 0."
         case let .partialFailure(attempted, succeeded, failed):
-            tooltip = "ScreenSwap: moved \(succeeded) of \(attempted) window(s); \(failed) failed."
+            tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed \(failed)."
         case .noMoves:
             tooltip = "ScreenSwap: no eligible windows were planned."
         case .noSelection:
@@ -408,9 +408,9 @@ public final class StatusItemActionHandler {
         case let .unsupportedDisplayCount(count):
             tooltip = "ScreenSwap: requires exactly two displays (found \(count))."
         case let .success(attempted, succeeded):
-            tooltip = "ScreenSwap: swapped \(succeeded) of \(attempted) window(s)."
+            tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed 0."
         case let .partialFailure(attempted, succeeded, failed):
-            tooltip = "ScreenSwap: moved \(succeeded) of \(attempted) window(s); \(failed) failed."
+            tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed \(failed)."
         case .noMoves:
             tooltip = "ScreenSwap: no eligible windows were planned."
         case .noSelection:

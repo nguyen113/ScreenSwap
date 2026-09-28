@@ -38,6 +38,9 @@ public protocol AccessibilityClient: AnyObject {
     func visibleWindows() throws -> [VisibleWindowSnapshot]
     func windows(for application: AccessibilityApplication) throws -> [AccessibilityWindowHandle]
     func attributes(for window: AccessibilityWindowHandle) throws -> AccessibilityWindowAttributes
+    /// User-facing text is intentionally a separate, best-effort operation.
+    /// A missing title must never make geometry capture or swapping fail.
+    func title(for window: AccessibilityWindowHandle) throws -> String?
     func setSize(_ size: CGSize, for window: AccessibilityWindowHandle) throws
     func setPosition(_ position: CGPoint, for window: AccessibilityWindowHandle) throws
     func raise(_ window: AccessibilityWindowHandle) throws
@@ -48,6 +51,8 @@ public protocol AccessibilityClient: AnyObject {
 }
 
 public extension AccessibilityClient {
+    func title(for window: AccessibilityWindowHandle) throws -> String? { nil }
+
     /// Fakes and clients that cannot activate an application may preserve the
     /// existing behavior. The live adapter overrides this for native
     /// full-screen Spaces, whose AX controls can reject background actions.
@@ -140,7 +145,6 @@ public final class LiveAccessibilityClient: AccessibilityClient {
         let positionSettable = try isSettable(kAXPositionAttribute as CFString, on: element)
         let sizeSettable = try isSettable(kAXSizeAttribute as CFString, on: element)
         let presentationState = presentationState(for: element)
-        let title = try optionalStringAttribute(kAXTitleAttribute as CFString, from: element)
         return AccessibilityWindowAttributes(
             role: role,
             subrole: subrole,
@@ -149,9 +153,15 @@ public final class LiveAccessibilityClient: AccessibilityClient {
             size: size,
             positionIsSettable: positionSettable,
             sizeIsSettable: sizeSettable,
-            presentationState: presentationState,
-            title: title
+            presentationState: presentationState
         )
+    }
+
+    public func title(for window: AccessibilityWindowHandle) throws -> String? {
+        guard let element = elements[window.token] else {
+            throw AccessibilityClientError.attributeReadFailed
+        }
+        return try optionalStringAttribute(kAXTitleAttribute as CFString, from: element)
     }
 
     public func setSize(_ size: CGSize, for window: AccessibilityWindowHandle) throws {
