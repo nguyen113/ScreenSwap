@@ -1,5 +1,16 @@
 # Architecture
 
+## Source organization
+
+`ScreenSwapCore` remains the pure domain target, organized into `Geometry/`
+and `Models/`. `ScreenSwapMac` remains one macOS target, organized by boundary:
+`Accessibility/`, `Displays/`, `Swap/`, `StatusItem/`, `Diagnostics/`,
+`Performance/`, and `Selection/`. The latter currently contains only the
+runtime selection identity seam; menu inventory and selection behavior remain
+future work.
+
+No additional SwiftPM targets are introduced by this layout refactor.
+
 ```text
 StatusBarController --> SwapCoordinator
                          |       |

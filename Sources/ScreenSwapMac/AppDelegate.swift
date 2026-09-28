@@ -4,40 +4,18 @@ import Foundation
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
-    private var authorization: LiveAccessibilityAuthorizer?
-    private var displayProvider: LiveDisplayProvider?
-    private var windowService: AccessibilityWindowService?
+    private var dependencies: AppDependencies?
 
     public override init() {
         super.init()
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        let authorization = LiveAccessibilityAuthorizer()
-        let displayProvider = LiveDisplayProvider()
-        let accessibilityClient = LiveAccessibilityClient()
-        let windowService = AccessibilityWindowService(client: accessibilityClient)
-        self.authorization = authorization
-        self.displayProvider = displayProvider
-        self.windowService = windowService
-        let coordinator = SwapCoordinator(
-            authorization: authorization,
-            displays: displayProvider,
-            windowProvider: windowService,
-            windowApplying: windowService,
-            windowRestorer: windowService,
-            windowVerifier: windowService,
-            performanceRecorder: SwapPerformanceLogger(isEnabled: {
-                #if DEBUG
-                true
-                #else
-                DiagnosticsConfiguration.isEnabled(environment: ProcessInfo.processInfo.environment)
-                #endif
-            }())
-        )
+        let dependencies = AppDependencies.live()
+        self.dependencies = dependencies
         statusBarController = StatusBarController(
-            coordinator: coordinator,
-            authorization: authorization
+            coordinator: dependencies.coordinator,
+            authorization: dependencies.authorization
         )
     }
 
@@ -51,13 +29,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func captureDiagnostics() {
-        windowService?.enableDiagnostics()
-        guard authorization?.isTrusted == true,
-              let displayProvider,
-              let windowService,
-              let displays = try? displayProvider.currentDisplays() else {
+        guard let dependencies else { return }
+
+        // Enable the process-local diagnostics route even before Accessibility
+        // is granted. A later authorized capture in this process must retain
+        // the user's explicit diagnostics request.
+        dependencies.windowService.enableDiagnostics()
+
+        guard dependencies.authorization.isTrusted,
+          let displays = try? dependencies.displayProvider.currentDisplays() else {
             return
         }
-        _ = windowService.captureWindows(displays: displays)
+        _ = dependencies.windowService.captureWindows(displays: displays)
     }
 }
