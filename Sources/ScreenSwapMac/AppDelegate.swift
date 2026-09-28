@@ -5,6 +5,7 @@ import Foundation
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
     private var dependencies: AppDependencies?
+    private var hotKeyService: GlobalHotKeyService?
 
     public override init() {
         super.init()
@@ -13,10 +14,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public func applicationDidFinishLaunching(_ notification: Notification) {
         let dependencies = AppDependencies.live()
         self.dependencies = dependencies
+        hotKeyService = GlobalHotKeyService()
         statusBarController = StatusBarController(
             coordinator: dependencies.coordinator,
-            authorization: dependencies.authorization
+            authorization: dependencies.authorization,
+            settings: dependencies.settings,
+            inventoryProvider: dependencies.menuInventory,
+            selection: dependencies.selectionStore,
+            shortcutRegistration: { [weak self] shortcut in
+                self?.registerGlobalShortcut(shortcut) ?? false
+            }
         )
+        _ = registerGlobalShortcut(dependencies.settings.shortcut)
     }
 
     public func application(_ application: NSApplication, open urls: [URL]) {
@@ -41,5 +50,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         _ = dependencies.windowService.captureWindows(displays: displays)
+    }
+
+    private func registerGlobalShortcut(_ shortcut: HotKeyShortcut) -> Bool {
+        hotKeyService?.register(shortcut) { [weak self] in
+            self?.statusBarController?.triggerSwap()
+        } ?? false
     }
 }

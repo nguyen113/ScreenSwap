@@ -7,15 +7,19 @@ public struct AccessibilityApplication: Equatable, Hashable, Sendable {
     public let processIdentifier: Int32
     public let isTerminated: Bool
     public let bundleIdentifier: String?
+    /// Presentation-only. This is never used as a window identity or logged.
+    public let localizedName: String?
 
     public init(
         processIdentifier: Int32,
         isTerminated: Bool = false,
-        bundleIdentifier: String? = nil
+        bundleIdentifier: String? = nil,
+        localizedName: String? = nil
     ) {
         self.processIdentifier = processIdentifier
         self.isTerminated = isTerminated
         self.bundleIdentifier = bundleIdentifier
+        self.localizedName = localizedName
     }
 }
 
@@ -79,7 +83,8 @@ public final class LiveAccessibilityClient: AccessibilityClient {
             AccessibilityApplication(
                 processIdentifier: $0.processIdentifier,
                 isTerminated: $0.isTerminated,
-                bundleIdentifier: $0.bundleIdentifier
+                bundleIdentifier: $0.bundleIdentifier,
+                localizedName: $0.localizedName
             )
         }
     }
@@ -135,6 +140,7 @@ public final class LiveAccessibilityClient: AccessibilityClient {
         let positionSettable = try isSettable(kAXPositionAttribute as CFString, on: element)
         let sizeSettable = try isSettable(kAXSizeAttribute as CFString, on: element)
         let presentationState = presentationState(for: element)
+        let title = try optionalStringAttribute(kAXTitleAttribute as CFString, from: element)
         return AccessibilityWindowAttributes(
             role: role,
             subrole: subrole,
@@ -143,7 +149,8 @@ public final class LiveAccessibilityClient: AccessibilityClient {
             size: size,
             positionIsSettable: positionSettable,
             sizeIsSettable: sizeSettable,
-            presentationState: presentationState
+            presentationState: presentationState,
+            title: title
         )
     }
 

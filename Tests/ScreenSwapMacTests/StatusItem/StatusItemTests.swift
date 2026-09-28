@@ -126,9 +126,51 @@ func statusItemExitMenuContainsNativeActionThatTerminatesOnlyScreenSwap() {
     let terminator = StatusFakeTerminator()
     let menuController = StatusItemMenuController(terminator: terminator)
 
-    #expect(menuController.menu.items.map(\.title) == ["Exit ScreenSwap"])
+    #expect(menuController.menu.items.map(\.title) == ["About ScreenSwap", "Settings…", "Exit ScreenSwap"])
     menuController.exitSelected(menuController.menu.items[0])
     #expect(terminator.terminateCount == 1)
+}
+
+@Test
+@MainActor
+func statusMenuBuildsFreshDisplayGroupsSelectionAndSpanningWarning() {
+    let firstKey = RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 10)
+    let secondKey = RuntimeWindowKey(processIdentifier: 2, quartzWindowNumber: 20)
+    let displays = [
+        InventoryDisplay(snapshot: DisplaySnapshot(id: 2, frame: CGRect(x: 100, y: 0, width: 100, height: 100), visibleFrame: CGRect(x: 100, y: 0, width: 100, height: 100)), ordinal: 2, name: nil),
+        InventoryDisplay(snapshot: DisplaySnapshot(id: 1, frame: CGRect(x: 0, y: 0, width: 100, height: 100), visibleFrame: CGRect(x: 0, y: 0, width: 100, height: 100)), ordinal: 1, name: "Built-in")
+    ]
+    let inventory = WindowInventory(displays: displays, windows: [
+        InventoryWindow(key: firstKey, displayID: 1, label: "Finder — Desktop", isSelectable: true, isSpanning: false),
+        InventoryWindow(key: secondKey, displayID: 2, label: "Terminal — Shell", isSelectable: true, isSpanning: false),
+        InventoryWindow(key: nil, displayID: nil, label: "Browser — Wide", isSelectable: false, isSpanning: true)
+    ])
+    let selection = WindowSelectionStore()
+    let menuController = StatusItemMenuController(
+        inventoryProvider: StatusFakeInventory(inventory),
+        selection: selection
+    )
+
+    #expect(menuController.menu.items.map(\.title).contains("Spanning windows — unavailable"))
+    #expect(menuController.menu.items.map(\.title).contains("⚠ Browser — Wide — spanning, unavailable"))
+    #expect(menuController.menu.items.map(\.title).contains("1 — Built-in"))
+    #expect(menuController.menu.items.map(\.title).contains("Display 2"))
+    let warning = menuController.menu.items.first { $0.title.contains("spanning, unavailable") }
+    #expect(warning?.isEnabled == false)
+    let group = menuController.menu.items.first { $0.title == "1 — Built-in" }!
+    #expect(group.state == .on)
+    menuController.perform(NSSelectorFromString("toggleGroup:"), with: group)
+    #expect(!selection.isSelected(firstKey))
+    #expect(selection.isSelected(secondKey))
+}
+
+@Test
+@MainActor
+func statusMenuShowsPermissionExplanationWithoutSelectionControls() {
+    let menuController = StatusItemMenuController(inventoryProvider: StatusFakeInventory(.permissionRequired))
+    #expect(menuController.menu.items.first?.title == "Accessibility permission required")
+    #expect(menuController.menu.items.first?.isEnabled == false)
+    #expect(menuController.menu.items.map(\.title).contains("Exit ScreenSwap"))
 }
 
 @MainActor
@@ -158,6 +200,13 @@ private final class StatusFakeMenuPresenter: StatusItemMenuPresenting {
     func present(from button: NSStatusBarButton?) {
         presentCount += 1
     }
+}
+
+@MainActor
+private final class StatusFakeInventory: StatusItemInventoryProviding {
+    let inventory: WindowInventory
+    init(_ inventory: WindowInventory) { self.inventory = inventory }
+    func currentInventory() -> WindowInventory { inventory }
 }
 
 @MainActor

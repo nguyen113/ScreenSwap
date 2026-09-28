@@ -4,9 +4,12 @@ import os
 import ScreenSwapCore
 
 @MainActor
-public final class AccessibilityWindowService: WindowProviding, WindowApplying, WindowRestoring, WindowVerifying {
+public final class AccessibilityWindowService: WindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowInventoryProviding {
     private static let diagnosticLogger = Logger(subsystem: "com.screenswap.app", category: "diagnostics")
     private let client: any AccessibilityClient
+    /// Inventory discovery owns a separate client cache so opening the menu
+    /// cannot invalidate AX handles retained by an in-flight swap transaction.
+    private let inventoryClient: (any AccessibilityClient)?
     private let processIdentifier: Int32
     private let mapping = WindowMappingEngine()
     private var lookup: [WindowID: AccessibilityWindowHandle] = [:]
@@ -28,11 +31,13 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
 
     public init(
         client: any AccessibilityClient,
+        inventoryClient: (any AccessibilityClient)? = nil,
         processIdentifier: Int32 = ProcessInfo.processInfo.processIdentifier,
         transitionPolicy: PresentationTransitionPolicy = PresentationTransitionPolicy(),
         transitionWaiter: any AccessibilityTransitionWaiting = MainRunLoopAccessibilityTransitionWaiter()
     ) {
         self.client = client
+        self.inventoryClient = inventoryClient
         self.processIdentifier = processIdentifier
         self.transitionPolicy = transitionPolicy
         self.transitionWaiter = transitionWaiter
@@ -43,6 +48,77 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
     /// `screenswap://diagnostics` route rather than a second AX process.
     public func enableDiagnostics() {
         localDiagnosticsEnabled = true
+    }
+
+    /// Builds presentation-only menu data. It deliberately does not touch the
+    /// transaction lookup, source frames, presentation state, or AX geometry.
+    public func inventory(displays: [InventoryDisplay]) -> WindowInventory {
+        let snapshots = displays.map(\.snapshot)
+        guard !snapshots.isEmpty else {
+            return WindowInventory(displays: displays, windows: [])
+        }
+        let reader = inventoryClient ?? client
+        reader.beginCapture()
+        guard let applications = try? reader.applications(),
+              let visibleWindows = try? reader.visibleWindows() else {
+            return WindowInventory(displays: displays, windows: [])
+        }
+
+        var windows: [InventoryWindow] = []
+        var ordinal = 0
+        var unmatchedVisibleWindows = visibleWindows
+        for application in applications where application.processIdentifier != processIdentifier && !application.isTerminated {
+            guard !isAuxiliaryApplication(application),
+                  let handles = try? reader.windows(for: application) else { continue }
+            for handle in handles {
+                guard let attributes = try? reader.attributes(for: handle),
+                      attributes.role == "AXWindow",
+                      !isTransient(attributes) else { continue }
+                let frame = CGRect(origin: attributes.position, size: attributes.size)
+                guard !frame.isEmpty else { continue }
+                let isSpanning = WindowInventoryClassifier.spans(frame, displays: snapshots)
+                let displayID = WindowInventoryClassifier.owner(of: frame, displays: snapshots)
+                guard isSpanning || displayID != nil else { continue }
+                ordinal += 1
+                let visibleIndex = VisibleWindowMatcher.matchIndex(
+                    processIdentifier: application.processIdentifier,
+                    frame: frame,
+                    candidates: unmatchedVisibleWindows
+                )
+                let visible = visibleIndex.map { unmatchedVisibleWindows.remove(at: $0) }
+                let key = visible.flatMap { visibleWindow in
+                    visibleWindow.windowNumber.map {
+                        RuntimeWindowKey(processIdentifier: application.processIdentifier, quartzWindowNumber: $0)
+                    }
+                }
+                let isEligible = {
+                    if case .eligible = WindowClassifier.classify(attributes) { return true }
+                    return false
+                }()
+                windows.append(InventoryWindow(
+                    key: key,
+                    displayID: displayID,
+                    label: WindowInventoryClassifier.label(
+                        applicationName: application.localizedName,
+                        title: attributes.title,
+                        ordinal: ordinal
+                    ),
+                    isSelectable: !isSpanning && isEligible && key != nil,
+                    isSpanning: isSpanning
+                ))
+            }
+        }
+        return WindowInventory(displays: displays, windows: windows)
+    }
+
+    private func isTransient(_ attributes: AccessibilityWindowAttributes) -> Bool {
+        guard attributes.role == "AXWindow" else { return true }
+        let transientSubroles: Set<String> = [
+            "AXDialog", "AXSystemDialog", "AXSheet", "AXFloatingWindow", "AXPopover",
+            "AXSystemFloatingWindow", "AXUnknown", "AXUtilityWindow", "AXDesktopWidget",
+            "AXWidget", "AXDesktop", "AXDockWindow", "AXMenu", "AXHelpTag"
+        ]
+        return transientSubroles.contains(attributes.subrole ?? "")
     }
 
     public func captureWindows(displays: [DisplaySnapshot]) -> WindowCaptureBatch {
@@ -220,7 +296,10 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                         snapshot: snapshot,
                         isResizable: isResizable,
                         presentationState: attributes.presentationState,
-                        isVisuallyMaximized: isVisuallyMaximized
+                        isVisuallyMaximized: isVisuallyMaximized,
+                        runtimeKey: visibleWindow?.windowNumber.map {
+                            RuntimeWindowKey(processIdentifier: application.processIdentifier, quartzWindowNumber: $0)
+                        }
                     )
                 )
                 nextLookup[id] = handle

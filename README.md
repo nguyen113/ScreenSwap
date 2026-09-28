@@ -46,6 +46,16 @@ must name an explicit Developer ID Application identity.
   clamped using that real size.
 - If a moved ordinary window remains absent from Quartz’s on-screen list after
   bounded verification, ScreenSwap attempts to restore its captured frame.
+- Right-click the menu-bar item for a fresh, read-only inventory of displays
+  and windows. Select individual windows or whole display groups; spanning
+  windows are shown as unavailable and never move.
+- The default global shortcut is Control–Option–Command–S. Settings lets you
+  replace it, choose launch at login, and explicitly request Accessibility
+  access. The status menu also includes an About window with the app version
+  and project link.
+- Hover feedback respects the macOS Reduce Motion preference. The latest
+  immutable pre-swap geometry is retained in memory as the seam for a future
+  undo command; it does not yet expose undo UI.
 - Public APIs cannot reliably transfer arbitrary foreign windows between macOS
   Spaces. Physical two-display validation remains required.
 
