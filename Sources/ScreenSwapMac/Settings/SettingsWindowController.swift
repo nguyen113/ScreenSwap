@@ -12,8 +12,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         shortcutRegistration: ((HotKeyShortcut) -> Bool)?
     ) {
         if let activeController {
-            activeController.showWindow(nil)
-            activeController.window?.makeKeyAndOrderFront(nil)
+            AuxiliaryWindowPresenter.present(activeController)
             return
         }
         let accessibility = NSTextField(labelWithString: authorization.isTrusted ? "Accessibility: Granted" : "Accessibility: Required")
@@ -57,8 +56,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         controller.shouldCascadeWindows = true
         window.delegate = controller
         Self.activeController = controller
-        controller.showWindow(nil)
-        window.makeKeyAndOrderFront(nil)
+        AuxiliaryWindowPresenter.present(controller)
     }
 
     func windowWillClose(_ notification: Notification) {

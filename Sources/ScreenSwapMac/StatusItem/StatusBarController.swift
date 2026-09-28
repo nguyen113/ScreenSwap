@@ -325,7 +325,7 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         terminator.terminate()
     }
 
-    @objc private func showAbout(_ sender: Any?) { AboutWindowController.shared.showWindow(nil) }
+    @objc private func showAbout(_ sender: Any?) { AboutWindowController.shared.present() }
     @objc private func showSettings(_ sender: Any?) {
         if let settings, let authorization {
             SettingsWindowController.show(

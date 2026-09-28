@@ -21,5 +21,10 @@ final class AboutWindowController: NSWindowController {
     }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func present() {
+        AuxiliaryWindowPresenter.present(self)
+    }
+
     @objc private func openGitHub() { NSWorkspace.shared.open(URL(string: "https://github.com/nguyen113/ScreenSwap-Gpt")!) }
 }
