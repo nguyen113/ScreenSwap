@@ -82,6 +82,7 @@ private final class PairAwareFakeWindows: DisplayPairWindowProviding, WindowAppl
     let candidates: [UInt32: Int]
     var applied: [(WindowMove, Bool)] = []
     private(set) var selectedDisplayIDs: [UInt32] = []
+    var onCapture: (() -> Void)?
 
     init(allWindows: [CapturedWindow], candidates: [UInt32: Int]) {
         self.allWindows = allWindows
@@ -101,11 +102,13 @@ private final class PairAwareFakeWindows: DisplayPairWindowProviding, WindowAppl
                 ? nil
                 : WindowSkip(processIdentifier: window.snapshot.id.processIdentifier, reason: .unselectedDisplay)
         }
-        return WindowCaptureBatch(
+        let batch = WindowCaptureBatch(
             windows: windows,
             skipped: skipped,
             knownRuntimeKeys: Set(allWindows.compactMap(\.runtimeKey))
         )
+        onCapture?()
+        return batch
     }
 
     func candidateCounts(activeDisplays: [DisplaySnapshot]) -> [UInt32: Int] { candidates }
@@ -257,7 +260,7 @@ func coordinatorSeparatesTrustCapturePlanAndApplyPhases() {
         planner: FakePlanner(log: log, moves: moves)
     )
     #expect(coordinator.swap() == .success(attempted: 2, succeeded: 2))
-    #expect(log.events == ["trust", "displays", "capture", "plan", "apply", "apply"])
+    #expect(log.events == ["trust", "displays", "capture", "displays", "plan", "displays", "apply", "apply"])
     #expect(windows.applied.map(\.1) == [true, false])
     #expect(coordinator.lastDiagnostics == SwapDiagnostics(
         discovered: 3,
@@ -617,4 +620,82 @@ func coordinatorDoesNotRerouteWhenDisplayPairChangesAfterCapture() {
     #expect(windows.selectedDisplayIDs == [1, 3])
     #expect(windows.applied.map { $0.0.destinationDisplayID }.sorted() == [1, 3])
     #expect(pairStore.frozenPair() == [3, 2])
+}
+
+@Test
+@MainActor
+func coordinatorAbortsWithoutWritesWhenSelectedDisplayDisconnectsAfterCapture() {
+    let initialDisplays = displays(count: 3)
+    let displayProvider = FakeDisplays(initialDisplays)
+    let pairStore = DisplayPairSelectionStore()
+    pairStore.reconcile(activeDisplays: initialDisplays, primaryDisplayID: 1, candidateCounts: [1: 3, 2: 1, 3: 2])
+    pairStore.select(displayID: 3, activeDisplays: initialDisplays, primaryDisplayID: 1, candidateCounts: [1: 3, 2: 1, 3: 2])
+    let first = captured("first")
+    let third = CapturedWindow(
+        snapshot: WindowSnapshot(
+            id: WindowID(processIdentifier: 10, accessibilityIdentifier: "third"),
+            sourceDisplayID: 3,
+            frame: CGRect(x: 2_100, y: 100, width: 300, height: 200)
+        ),
+        isResizable: true
+    )
+    let planner = FakePlanner(log: EventLog(), moves: [])
+    let windows = PairAwareFakeWindows(allWindows: [first, third], candidates: [1: 3, 2: 1, 3: 2])
+    windows.onCapture = { displayProvider.values = Array(initialDisplays.prefix(2)) }
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: displayProvider,
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        displaySelection: pairStore
+    )
+
+    #expect(coordinator.swap() == .displayTopologyChanged)
+    #expect(planner.plannedWindows.isEmpty)
+    #expect(windows.applied.isEmpty)
+    #expect(coordinator.lastDiagnostics.attempted == 0)
+}
+
+@Test
+@MainActor
+func coordinatorAbortsWithoutWritesWhenDisplayGeometryChangesAfterCapture() {
+    let initialDisplays = displays(count: 3)
+    let displayProvider = FakeDisplays(initialDisplays)
+    let pairStore = DisplayPairSelectionStore()
+    pairStore.reconcile(activeDisplays: initialDisplays, primaryDisplayID: 1, candidateCounts: [1: 3, 2: 1, 3: 2])
+    pairStore.select(displayID: 3, activeDisplays: initialDisplays, primaryDisplayID: 1, candidateCounts: [1: 3, 2: 1, 3: 2])
+    let first = captured("first")
+    let third = CapturedWindow(
+        snapshot: WindowSnapshot(
+            id: WindowID(processIdentifier: 10, accessibilityIdentifier: "third"),
+            sourceDisplayID: 3,
+            frame: CGRect(x: 2_100, y: 100, width: 300, height: 200)
+        ),
+        isResizable: true
+    )
+    let planner = FakePlanner(log: EventLog(), moves: [])
+    let windows = PairAwareFakeWindows(allWindows: [first, third], candidates: [1: 3, 2: 1, 3: 2])
+    windows.onCapture = {
+        var changed = initialDisplays
+        changed[2] = DisplaySnapshot(
+            id: 3,
+            frame: CGRect(x: 2_100, y: 0, width: 900, height: 700),
+            visibleFrame: CGRect(x: 2_100, y: 20, width: 900, height: 680)
+        )
+        displayProvider.values = changed
+    }
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: displayProvider,
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        displaySelection: pairStore
+    )
+
+    #expect(coordinator.swap() == .displayTopologyChanged)
+    #expect(planner.plannedWindows.isEmpty)
+    #expect(windows.applied.isEmpty)
+    #expect(coordinator.lastDiagnostics.attempted == 0)
 }

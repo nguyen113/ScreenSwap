@@ -42,12 +42,15 @@ It must not depend on Accessibility APIs or status-bar UI.
    frozen pair.
 7. Compute the complete destination move plan using the unchanged two-display
    mapping engine.
-8. Apply every planned move, continuing after individual failures.
-9. Verify successful ordinary-window writes against both AX geometry and the
+8. Re-read display IDs, full frames, and visible frames after capture and
+   immediately before the first AX write. Abort with no writes if topology or
+   geometry changed during the transaction.
+9. Apply every planned move, continuing after individual failures.
+10. Verify successful ordinary-window writes against both AX geometry and the
    Quartz on-screen window list.
-10. If a window has the expected AX geometry but remains offscreen after the
+11. If a window has the expected AX geometry but remains offscreen after the
     bounded verification window, best-effort restore its captured AX frame.
-11. Report non-sensitive counts and outcome to the status item.
+12. Report non-sensitive counts and outcome to the status item.
 
 At transaction capture, `WindowSelectionStore` is reconciled against fresh
 `RuntimeWindowKey` values from the whole topology and frozen for the remainder

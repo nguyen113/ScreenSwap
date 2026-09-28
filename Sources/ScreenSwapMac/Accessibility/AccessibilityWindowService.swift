@@ -275,9 +275,13 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                 // topology before checking whether this window belongs to the
                 // selected pair. This prevents a third-display window from
                 // being assigned to a selected display by two-display logic.
+                let isSpanning = WindowInventoryClassifier.spans(frame, displays: activeDisplays)
                 guard let sourceDisplayID = WindowInventoryClassifier.owner(of: frame, displays: activeDisplays),
                       let sourceDisplay = activeDisplays.first(where: { $0.id == sourceDisplayID }) else {
-                    skipped.append(WindowSkip(processIdentifier: application.processIdentifier, reason: .unknownSourceDisplay))
+                    skipped.append(WindowSkip(
+                        processIdentifier: application.processIdentifier,
+                        reason: isSpanning ? .spanningDisplays : .unknownSourceDisplay
+                    ))
                     continue
                 }
                 let retainedMaximizedIntent = visibleWindow?.windowNumber.map(maximizedWindowNumbers.contains) == true
@@ -286,7 +290,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                     (retainedMaximizedIntent || fillsSourceVisibleFrame)
                 // Preserve the established one-point maximized-frame tolerance
                 // before applying full-topology spanning classification.
-                if WindowInventoryClassifier.spans(frame, displays: activeDisplays), !isVisuallyMaximized {
+                if isSpanning, !isVisuallyMaximized {
                     skipped.append(WindowSkip(processIdentifier: application.processIdentifier, reason: .spanningDisplays))
                     continue
                 }

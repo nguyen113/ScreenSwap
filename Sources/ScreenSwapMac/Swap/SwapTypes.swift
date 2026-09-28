@@ -216,6 +216,9 @@ public enum SwapOutcome: Equatable, Sendable {
     case noSelection
     case noPermission
     case unsupportedDisplayCount(Int)
+    /// Active display IDs or geometry changed after the transaction snapshot.
+    /// No Accessibility mutation is attempted; retry against the new topology.
+    case displayTopologyChanged
     case alreadyRunning
 }
 
@@ -235,6 +238,8 @@ public extension SwapOutcome {
             "noPermission"
         case .unsupportedDisplayCount:
             "unsupportedDisplayCount"
+        case .displayTopologyChanged:
+            "displayTopologyChanged"
         case .alreadyRunning:
             "alreadyRunning"
         }

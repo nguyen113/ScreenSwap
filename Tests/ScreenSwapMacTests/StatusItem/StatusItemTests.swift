@@ -71,6 +71,11 @@ func statusFeedbackCatalogProvidesImmediateSafePayloadForEveryOutcome() {
             "ScreenSwap requires at least two active displays; found 3."
         ),
         (
+            .displayTopologyChanged,
+            "Display configuration changed",
+            "Your display configuration changed. Try the swap again."
+        ),
+        (
             .alreadyRunning,
             "ScreenSwap busy",
             "A swap is already running."

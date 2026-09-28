@@ -24,6 +24,11 @@ public enum StatusItemFeedbackCatalog {
                 title: "ScreenSwap",
                 message: "ScreenSwap requires at least two active displays; found \(count)."
             )
+        case .displayTopologyChanged:
+            return StatusItemFeedback(
+                title: "Display configuration changed",
+                message: "Your display configuration changed. Try the swap again."
+            )
         case let .success(attempted, succeeded):
             return StatusItemFeedback(
                 title: "ScreenSwap complete",
@@ -477,6 +482,8 @@ public final class StatusItemActionHandler {
             tooltip = "ScreenSwap: grant Accessibility access, then click again."
         case let .unsupportedDisplayCount(count):
             tooltip = "ScreenSwap: requires at least two active displays (found \(count))."
+        case .displayTopologyChanged:
+            tooltip = "ScreenSwap: display configuration changed. Try again."
         case let .success(attempted, succeeded):
             tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed 0."
         case let .partialFailure(attempted, succeeded, failed):
@@ -509,6 +516,8 @@ public final class StatusItemActionHandler {
             tooltip = "ScreenSwap: grant Accessibility access, then click again."
         case let .unsupportedDisplayCount(count):
             tooltip = "ScreenSwap: requires at least two active displays (found \(count))."
+        case .displayTopologyChanged:
+            tooltip = "ScreenSwap: display configuration changed. Try again."
         case let .success(attempted, succeeded):
             tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed 0."
         case let .partialFailure(attempted, succeeded, failed):
