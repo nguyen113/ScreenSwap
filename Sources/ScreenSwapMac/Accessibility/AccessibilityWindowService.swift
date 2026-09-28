@@ -95,6 +95,11 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                     if case .eligible = WindowClassifier.classify(attributes) { return true }
                     return false
                 }()
+                // Quartz can omit native full-screen windows in a different
+                // Space. That is the only AX-only window form capture admits,
+                // so only it may be shown as included automatically.
+                let isAutomaticallyIncluded = !isSpanning && isEligible &&
+                    key == nil && attributes.presentationState.isFullScreen == true
                 windows.append(InventoryWindow(
                     key: key,
                     displayID: displayID,
@@ -104,7 +109,7 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
                         ordinal: ordinal
                     ),
                     isSelectable: !isSpanning && isEligible && key != nil,
-                    isAutomaticallyIncluded: !isSpanning && isEligible && key == nil,
+                    isAutomaticallyIncluded: isAutomaticallyIncluded,
                     isSpanning: isSpanning
                 ))
             }

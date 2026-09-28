@@ -1098,6 +1098,33 @@ func accessibilityServiceCapturesAXConfirmedFullScreenWindowWhenQuartzOmitsItsSp
 
 @Test
 @MainActor
+func accessibilityServiceAutomaticallyIncludesOnlyAXOnlyNativeFullScreenInventoryWindows() {
+    let client = FakeAccessibilityClient()
+    let application = AccessibilityApplication(processIdentifier: 100)
+    let nativeFullScreen = AccessibilityWindowHandle(token: "native-full-screen")
+    let ordinaryUnavailable = AccessibilityWindowHandle(token: "ordinary-unavailable")
+    client.appValues = [application]
+    client.handlesByPID[application.processIdentifier] = [nativeFullScreen, ordinaryUnavailable]
+    client.visibleWindowValues = []
+    client.attributesByToken[nativeFullScreen.token] = serviceAttributes(
+        presentationState: WindowPresentationState(isFullScreen: true, canToggleFullScreen: true)
+    )
+    client.attributesByToken[ordinaryUnavailable.token] = serviceAttributes(
+        position: CGPoint(x: 1_200, y: 100)
+    )
+
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let inventory = service.inventory(displays: serviceDisplays.enumerated().map {
+        InventoryDisplay(snapshot: $0.element, ordinal: $0.offset + 1, name: nil)
+    })
+
+    #expect(inventory.windows.count == 2)
+    #expect(inventory.windows.map(\.isAutomaticallyIncluded) == [true, false])
+    #expect(inventory.windows.allSatisfy { !$0.isSelectable })
+}
+
+@Test
+@MainActor
 func accessibilityServiceRestoresFullScreenStateAfterRelocatingWindow() {
     let client = FakeAccessibilityClient()
     let handle = AccessibilityWindowHandle(token: "full-screen")
