@@ -25,6 +25,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             displays: displayProvider,
             windowProvider: windowService,
             windowApplying: windowService,
+            windowRestorer: windowService,
             windowVerifier: windowService,
             performanceRecorder: SwapPerformanceLogger(isEnabled: {
                 #if DEBUG

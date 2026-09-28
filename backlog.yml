@@ -937,13 +937,14 @@ tasks:
 - id: QA-FEATURE-003
   title: Swap only frontmost-app windows and leave Stage Manager groups in place
   group: qa
-  status: ready
+  status: superseded
   depends_on:
   - QA-BUG-004
   allowed_paths:
   - Sources/ScreenSwapMac/**
   - Tests/ScreenSwapMacTests/**
   - docs/validation/**
+  note: Superseded by the all-visible-applications policy implemented for QA-FEATURE-004. Do not implement this frontmost-only behavior.
   acceptance:
   - A swap captures and plans moves only for eligible windows owned by the current frontmost application.
   - Windows belonging to every non-frontmost application, including inactive Stage Manager groups, remain on their current display and receive no Accessibility writes.
@@ -959,7 +960,7 @@ tasks:
   group: qa
   status: ready
   depends_on:
-  - QA-FEATURE-003
+  - QA-BUG-004
   allowed_paths:
   - Sources/ScreenSwapCore/**
   - Sources/ScreenSwapMac/**

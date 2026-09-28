@@ -44,7 +44,7 @@ done
 # builds. Unlike ad-hoc signing, its designated requirement survives each
 # compiled binary, so macOS does not create a fresh Accessibility entry on
 # every update. Production callers can still supply their own identity.
-if [[ -z "$SIGNING_IDENTITY" ]]; then
+if ! $RELEASE && [[ -z "$SIGNING_IDENTITY" ]]; then
     local_identity_hash="$(security find-identity -v -p codesigning 2>/dev/null | awk -v name="$LOCAL_DEVELOPMENT_IDENTITY" '$0 ~ "\\\"" name "\\\"" { print $2; exit }')"
     if [[ -n "$local_identity_hash" ]]; then
         SIGNING_IDENTITY="$local_identity_hash"
@@ -52,7 +52,7 @@ if [[ -z "$SIGNING_IDENTITY" ]]; then
 fi
 
 if $RELEASE && [[ -z "$SIGNING_IDENTITY" ]]; then
-    echo "error: --release requires --signing-identity or SCREENSWAP_SIGNING_IDENTITY" >&2
+    echo "error: release packaging requires an explicit Developer ID Application identity" >&2
     exit 2
 fi
 
@@ -106,10 +106,21 @@ else
 fi
 codesign --verify --deep --strict "$APP_BUNDLE"
 
+designated_requirement() {
+    codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'
+}
+
 if $INSTALL; then
     if [[ -e "$INSTALL_PATH" ]]; then
         if ! $REPLACE; then
             echo "error: $INSTALL_PATH already exists; pass --replace to update it" >&2
+            exit 1
+        fi
+        old_requirement="$(designated_requirement "$INSTALL_PATH")"
+        new_requirement="$(designated_requirement "$APP_BUNDLE")"
+        if [[ -n "$old_requirement" && -n "$new_requirement" && "$old_requirement" != "$new_requirement" ]]; then
+            echo "error: signing identity/designated requirement changed" >&2
+            echo "       refusing update because Accessibility authorization may be lost" >&2
             exit 1
         fi
         running_pids_text="$(pgrep -x ScreenSwapApp 2>/dev/null || true)"

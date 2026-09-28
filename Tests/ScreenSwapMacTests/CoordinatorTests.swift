@@ -77,6 +77,36 @@ private final class FakeWindows: WindowProviding, WindowApplying {
 }
 
 @MainActor
+private final class FakeNotVisibleVerifier: WindowVerifying {
+    let clock: RollbackClock
+
+    init(clock: RollbackClock) {
+        self.clock = clock
+    }
+
+    func verificationStatus(for move: WindowMove, isResizable: Bool, tolerance: CGFloat) -> WindowVerificationStatus {
+        clock.value = 500_000_000
+        return .notVisible
+    }
+}
+
+@MainActor
+private final class RollbackClock: MonotonicTimeSource {
+    var value: UInt64 = 0
+    func nowNanoseconds() -> UInt64 { value }
+}
+
+@MainActor
+private final class FakeRestorer: WindowRestoring {
+    var restored: [(WindowID, Bool)] = []
+
+    func restore(windowID: WindowID, isResizable: Bool) -> WindowApplyResult {
+        restored.append((windowID, isResizable))
+        return .success
+    }
+}
+
+@MainActor
 private final class FakePlanner: SwapPlanning {
     let log: EventLog
     let moves: [WindowMove]
@@ -274,4 +304,33 @@ func coordinatorReturnsAlreadyRunningWhenGuardIsEntered() {
         failed: 0
     ))
     #expect(reentrantResult == .alreadyRunning)
+}
+
+@Test
+@MainActor
+func measuredSwapRestoresOnlyWindowsThatRemainNotVisibleAfterVerification() async {
+    let window = captured("hidden-after-write", resizable: false)
+    let move = WindowMove(
+        windowID: window.snapshot.id,
+        destinationDisplayID: 2,
+        frame: CGRect(x: 1_100, y: 100, width: 150, height: 100)
+    )
+    let clock = RollbackClock()
+    let restorer = FakeRestorer()
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows,
+        windowRestorer: restorer,
+        planner: FakePlanner(log: EventLog(), moves: [move]),
+        windowVerifier: FakeNotVisibleVerifier(clock: clock),
+        clock: clock
+    )
+
+    let result = await coordinator.swapMeasured(commandReceivedNanoseconds: 0)
+    #expect(result.outcome == .partialFailure(attempted: 1, succeeded: 0, failed: 1))
+    #expect(restorer.restored.map { $0.0 } == [window.snapshot.id])
+    #expect(restorer.restored.map { $0.1 } == [false])
 }

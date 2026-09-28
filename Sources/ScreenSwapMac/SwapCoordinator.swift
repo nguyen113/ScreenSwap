@@ -7,6 +7,7 @@ public final class SwapCoordinator {
     private let displays: any DisplayProviding
     private let windowProvider: any WindowProviding
     private let windowApplying: any WindowApplying
+    private let windowRestorer: (any WindowRestoring)?
     private let windowVerifier: (any WindowVerifying)?
     private let planner: any SwapPlanning
     private let clock: any MonotonicTimeSource
@@ -19,6 +20,7 @@ public final class SwapCoordinator {
         displays: any DisplayProviding,
         windowProvider: any WindowProviding,
         windowApplying: any WindowApplying,
+        windowRestorer: (any WindowRestoring)? = nil,
         planner: any SwapPlanning = WindowMappingEngine(),
         windowVerifier: (any WindowVerifying)? = nil,
         clock: any MonotonicTimeSource = MachContinuousTimeSource(),
@@ -28,6 +30,7 @@ public final class SwapCoordinator {
         self.displays = displays
         self.windowProvider = windowProvider
         self.windowApplying = windowApplying
+        self.windowRestorer = windowRestorer
         self.planner = planner
         self.windowVerifier = windowVerifier
         self.clock = clock
@@ -194,6 +197,10 @@ public final class SwapCoordinator {
         let t4 = clock.nowNanoseconds()
 
         let verification = await verify(verifiedCandidates)
+        for id in verification.notVisibleIDs {
+            guard let isResizable = capabilities[id] else { continue }
+            _ = windowRestorer?.restore(windowID: id, isResizable: isResizable)
+        }
         let t5 = clock.nowNanoseconds()
         let failedIDs = applyFailedIDs.union(verification.unverifiedIDs)
         let succeeded = moves.count - failedIDs.count
@@ -220,14 +227,17 @@ public final class SwapCoordinator {
         )
     }
 
-    private func verify(_ candidates: [(WindowMove, Bool)]) async -> (unverifiedIDs: Set<WindowID>, didVerify: Bool, timedOut: Bool) {
-        guard !candidates.isEmpty else { return ([], windowVerifier != nil, false) }
-        guard let windowVerifier else { return (Set(candidates.map { $0.0.windowID }), false, false) }
+    private func verify(_ candidates: [(WindowMove, Bool)]) async -> (unverifiedIDs: Set<WindowID>, notVisibleIDs: Set<WindowID>, didVerify: Bool, timedOut: Bool) {
+        guard !candidates.isEmpty else { return ([], [], windowVerifier != nil, false) }
+        guard let windowVerifier else { return (Set(candidates.map { $0.0.windowID }), [], false, false) }
         var pending = Dictionary(uniqueKeysWithValues: candidates.map { ($0.0.windowID, $0) })
+        var latestStatuses: [WindowID: WindowVerificationStatus] = [:]
         let deadline = clock.nowNanoseconds() &+ 500_000_000
         while !pending.isEmpty {
             let verifiedIDs = pending.compactMap { id, candidate in
-                if windowVerifier.verificationStatus(for: candidate.0, isResizable: candidate.1, tolerance: 2) == .verified {
+                let status = windowVerifier.verificationStatus(for: candidate.0, isResizable: candidate.1, tolerance: 2)
+                latestStatuses[id] = status
+                if status == .verified {
                     return id
                 }
                 return nil
@@ -235,11 +245,16 @@ public final class SwapCoordinator {
             for id in verifiedIDs {
                 pending.removeValue(forKey: id)
             }
-            guard !pending.isEmpty else { return ([], true, false) }
-            guard clock.nowNanoseconds() < deadline else { return (Set(pending.keys), true, true) }
+            guard !pending.isEmpty else { return ([], [], true, false) }
+            guard clock.nowNanoseconds() < deadline else {
+                let unresolved = Set(pending.keys)
+                let notVisible = Set(latestStatuses.compactMap { $0.value == .notVisible ? $0.key : nil })
+                    .intersection(unresolved)
+                return (unresolved, notVisible, true, true)
+            }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        return ([], true, false)
+        return ([], [], true, false)
     }
 
     /// A native full-screen transition can activate or replace a macOS Space.
