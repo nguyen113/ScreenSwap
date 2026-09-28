@@ -38,6 +38,8 @@ public enum StatusItemFeedbackCatalog {
                 title: "No windows swapped",
                 message: "No eligible windows were planned for this swap."
             )
+        case .noSelection:
+            return StatusItemFeedback(title: "No windows selected", message: "Select one or more windows from the ScreenSwap menu.")
         case .alreadyRunning:
             return StatusItemFeedback(
                 title: "ScreenSwap busy",
@@ -122,6 +124,48 @@ public protocol ScreenSwapTerminating: AnyObject {
 }
 
 @MainActor
+public protocol StatusItemInventoryProviding: AnyObject {
+    func currentInventory() -> WindowInventory
+}
+
+/// Composes the read-only menu inventory without making the status UI depend
+/// on AppKit display or Accessibility adapters directly.
+@MainActor
+public final class LiveStatusItemInventoryProvider: StatusItemInventoryProviding {
+    private let authorization: any AccessibilityAuthorizing
+    private let displays: any DisplayProviding
+    private let namedDisplays: (any DisplayInventoryProviding)?
+    private let windows: any WindowInventoryProviding
+
+    public init(
+        authorization: any AccessibilityAuthorizing,
+        displays: any DisplayProviding,
+        namedDisplays: (any DisplayInventoryProviding)? = nil,
+        windows: any WindowInventoryProviding
+    ) {
+        self.authorization = authorization
+        self.displays = displays
+        self.namedDisplays = namedDisplays
+        self.windows = windows
+    }
+
+    public func currentInventory() -> WindowInventory {
+        guard authorization.isTrusted else { return .permissionRequired }
+        let inventoryDisplays: [InventoryDisplay]
+        if let namedDisplays, let result = try? namedDisplays.currentInventoryDisplays() {
+            inventoryDisplays = result
+        } else if let snapshots = try? displays.currentDisplays() {
+            inventoryDisplays = snapshots.sorted { $0.id < $1.id }.enumerated().map {
+                InventoryDisplay(snapshot: $0.element, ordinal: $0.offset + 1, name: nil)
+            }
+        } else {
+            inventoryDisplays = []
+        }
+        return windows.inventory(displays: inventoryDisplays)
+    }
+}
+
+@MainActor
 public final class LiveScreenSwapTerminator: ScreenSwapTerminating {
     public init() {}
 
@@ -134,23 +178,34 @@ public final class LiveScreenSwapTerminator: ScreenSwapTerminating {
 public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting {
     public let menu: NSMenu
     private let terminator: any ScreenSwapTerminating
+    private let settings: ScreenSwapSettings?
+    private let authorization: (any AccessibilityAuthorizing)?
+    private let inventoryProvider: (any StatusItemInventoryProviding)?
+    private let selection: WindowSelectionStore?
+    private let shortcutRegistration: ((HotKeyShortcut) -> Bool)?
 
-    public init(terminator: any ScreenSwapTerminating = LiveScreenSwapTerminator()) {
+    public init(
+        terminator: any ScreenSwapTerminating = LiveScreenSwapTerminator(),
+        settings: ScreenSwapSettings? = nil,
+        authorization: (any AccessibilityAuthorizing)? = nil,
+        inventoryProvider: (any StatusItemInventoryProviding)? = nil,
+        selection: WindowSelectionStore? = nil,
+        shortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil
+    ) {
         self.terminator = terminator
+        self.settings = settings
+        self.authorization = authorization
+        self.inventoryProvider = inventoryProvider
+        self.selection = selection
+        self.shortcutRegistration = shortcutRegistration
         menu = NSMenu()
         super.init()
-
-        let exitItem = NSMenuItem(
-            title: "Exit ScreenSwap",
-            action: #selector(exitSelected(_:)),
-            keyEquivalent: ""
-        )
-        exitItem.target = self
-        menu.addItem(exitItem)
+        rebuildMenu()
     }
 
     public func present(from button: NSStatusBarButton?) {
         guard let button else { return }
+        rebuildMenu()
         menu.popUp(
             positioning: nil,
             at: CGPoint(x: button.bounds.midX, y: button.bounds.minY),
@@ -158,10 +213,143 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         )
     }
 
+    /// Rebuilding is deliberately a read-only operation. It uses fresh menu
+    /// data every time so window movement, closure, and display reassignment
+    /// cannot leave a stale selection row onscreen.
+    public func rebuildMenu() {
+        menu.removeAllItems()
+        if let inventoryProvider {
+            appendInventory(inventoryProvider.currentInventory())
+        }
+        appendUtilityItems(separatorNeeded: !menu.items.isEmpty)
+    }
+
+    private func appendInventory(_ inventory: WindowInventory) {
+        guard inventory.isAuthorized else {
+            let item = NSMenuItem(title: "Accessibility permission required", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            return
+        }
+
+        let selectableKeys = Set(inventory.windows.compactMap { $0.isSelectable ? $0.key : nil })
+        selection?.reconcile(selectableKeys)
+        if !inventory.supportsSelection {
+            let item = NSMenuItem(
+                title: "Selection requires exactly two displays (found \(inventory.displays.count))",
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+
+        let spanning = inventory.spanningWindows
+        if !spanning.isEmpty {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let heading = NSMenuItem(title: "Spanning windows — unavailable", action: nil, keyEquivalent: "")
+            heading.isEnabled = false
+            heading.toolTip = "Spanning windows cannot be swapped"
+            menu.addItem(heading)
+            for window in spanning {
+                let item = NSMenuItem(title: "⚠ \(window.label) — spanning, unavailable", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                item.state = .off
+                item.toolTip = "Spanning window — unavailable"
+                item.attributedTitle = NSAttributedString(
+                    string: item.title,
+                    attributes: [.foregroundColor: NSColor.systemRed]
+                )
+                menu.addItem(item)
+            }
+        }
+
+        for display in inventory.displays {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let children = inventory.windows(on: display.snapshot.id)
+            let keys = Set(children.compactMap { $0.isSelectable ? $0.key : nil })
+            let group = NSMenuItem(title: display.label, action: #selector(toggleGroup(_:)), keyEquivalent: "")
+            group.target = self
+            group.representedObject = SelectionMenuPayload(keys: keys)
+            group.state = menuState(selection?.selectionState(for: keys) ?? .on)
+            group.isEnabled = inventory.supportsSelection && !keys.isEmpty
+            menu.addItem(group)
+            for child in children {
+                let title = child.isAutomaticallyIncluded
+                    ? "    \(child.label) — included automatically"
+                    : "    \(child.label)"
+                let item = NSMenuItem(title: title, action: #selector(toggleWindow(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = child.key.map { SelectionMenuPayload(keys: [$0]) }
+                item.state = child.isAutomaticallyIncluded
+                    ? .on
+                    : child.key.map { menuState(selection?.selectionState(for: [$0]) ?? .on) } ?? .off
+                item.isEnabled = inventory.supportsSelection && child.isSelectable && child.key != nil
+                if child.isAutomaticallyIncluded {
+                    item.toolTip = "Included automatically; no Quartz window identity is available for selection."
+                } else if !item.isEnabled {
+                    item.toolTip = "Unavailable for swapping"
+                }
+                menu.addItem(item)
+            }
+        }
+    }
+
+    private func appendUtilityItems(separatorNeeded: Bool) {
+        if separatorNeeded { menu.addItem(.separator()) }
+        let about = NSMenuItem(title: "About ScreenSwap", action: #selector(showAbout(_:)), keyEquivalent: "")
+        about.target = self; menu.addItem(about)
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        settingsItem.target = self; menu.addItem(settingsItem)
+        let exitItem = NSMenuItem(title: "Exit ScreenSwap", action: #selector(exitSelected(_:)), keyEquivalent: "")
+        exitItem.target = self; menu.addItem(exitItem)
+    }
+
+    @objc private func toggleGroup(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? SelectionMenuPayload,
+              !payload.keys.isEmpty else { return }
+        let state = selection?.selectionState(for: payload.keys) ?? .off
+        selection?.setSelected(state != .on, for: payload.keys)
+        rebuildMenu()
+    }
+
+    @objc private func toggleWindow(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? SelectionMenuPayload,
+              payload.keys.count == 1,
+              let key = payload.keys.first else { return }
+        selection?.setSelected(!(selection?.isSelected(key) ?? false), for: key)
+        rebuildMenu()
+    }
+
+    private func menuState(_ state: WindowSelectionState) -> NSControl.StateValue {
+        switch state {
+        case .off: return .off
+        case .on: return .on
+        case .mixed: return .mixed
+        }
+    }
+
     @objc
     public func exitSelected(_ sender: Any?) {
         terminator.terminate()
     }
+
+    @objc private func showAbout(_ sender: Any?) { AboutWindowController.shared.present() }
+    @objc private func showSettings(_ sender: Any?) {
+        if let settings, let authorization {
+            SettingsWindowController.show(
+                settings: settings,
+                authorization: authorization,
+                shortcutRegistration: shortcutRegistration
+            )
+        }
+    }
+}
+
+@MainActor
+private final class SelectionMenuPayload: NSObject {
+    let keys: Set<RuntimeWindowKey>
+    init(keys: Set<RuntimeWindowKey>) { self.keys = keys }
 }
 
 @MainActor
@@ -197,11 +385,13 @@ public final class StatusItemActionHandler {
         case let .unsupportedDisplayCount(count):
             tooltip = "ScreenSwap: requires exactly two displays (found \(count))."
         case let .success(attempted, succeeded):
-            tooltip = "ScreenSwap: swapped \(succeeded) of \(attempted) window(s)."
+            tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed 0."
         case let .partialFailure(attempted, succeeded, failed):
-            tooltip = "ScreenSwap: moved \(succeeded) of \(attempted) window(s); \(failed) failed."
+            tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed \(failed)."
         case .noMoves:
             tooltip = "ScreenSwap: no eligible windows were planned."
+        case .noSelection:
+            tooltip = "ScreenSwap: no selection — selected 0, attempted 0, succeeded 0, failed 0."
         case .alreadyRunning:
             tooltip = "ScreenSwap: a swap is already running."
         }
@@ -227,11 +417,13 @@ public final class StatusItemActionHandler {
         case let .unsupportedDisplayCount(count):
             tooltip = "ScreenSwap: requires exactly two displays (found \(count))."
         case let .success(attempted, succeeded):
-            tooltip = "ScreenSwap: swapped \(succeeded) of \(attempted) window(s)."
+            tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed 0."
         case let .partialFailure(attempted, succeeded, failed):
-            tooltip = "ScreenSwap: moved \(succeeded) of \(attempted) window(s); \(failed) failed."
+            tooltip = "ScreenSwap: selected \(diagnostics.selected), attempted \(attempted), succeeded \(succeeded), failed \(failed)."
         case .noMoves:
             tooltip = "ScreenSwap: no eligible windows were planned."
+        case .noSelection:
+            tooltip = "ScreenSwap: no selection — selected 0, attempted 0, succeeded 0, failed 0."
         case .alreadyRunning:
             tooltip = "ScreenSwap: a swap is already running."
         }
@@ -328,16 +520,27 @@ public final class StatusBarController: NSObject {
     private let actionHandler: StatusItemActionHandler
     private let feedbackPresenter: any StatusItemFeedbackPresenting
     private let clickRouter: StatusItemClickRouter
+    private let iconAnimation = IconAnimationController()
 
     public init(
         coordinator: SwapCoordinator,
         authorization: any AccessibilityAuthorizing,
+        settings: ScreenSwapSettings? = nil,
+        inventoryProvider: (any StatusItemInventoryProviding)? = nil,
+        selection: WindowSelectionStore? = nil,
+        shortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil,
         feedbackPresenter: any StatusItemFeedbackPresenting = StatusPopoverFeedbackPresenter()
     ) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         actionHandler = StatusItemActionHandler(coordinator: coordinator, authorization: authorization)
         self.feedbackPresenter = feedbackPresenter
-        clickRouter = StatusItemClickRouter(menuPresenter: StatusItemMenuController())
+        clickRouter = StatusItemClickRouter(menuPresenter: StatusItemMenuController(
+            settings: settings,
+            authorization: authorization,
+            inventoryProvider: inventoryProvider,
+            selection: selection,
+            shortcutRegistration: shortcutRegistration
+        ))
         super.init()
         configureButton()
     }
@@ -355,6 +558,30 @@ public final class StatusBarController: NSObject {
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = actionHandler.tooltip
+        button.addTrackingArea(NSTrackingArea(rect: button.bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
+    }
+
+    @objc public func mouseEntered(with event: NSEvent) {
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let shouldAnimate = iconAnimation.pointerEntered(reduceMotion: reduced)
+        guard let button = statusItem.button else { return }
+        if reduced {
+            button.contentTintColor = .secondaryLabelColor
+            return
+        }
+        guard shouldAnimate else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            button.animator().alphaValue = 0.55
+        } completionHandler: { [weak button] in
+            Task { @MainActor in button?.alphaValue = 1 }
+        }
+    }
+
+    @objc public func mouseExited(with event: NSEvent) {
+        iconAnimation.pointerExited()
+        statusItem.button?.alphaValue = 1
+        statusItem.button?.contentTintColor = nil
     }
 
     @objc
@@ -381,12 +608,14 @@ public final class StatusBarController: NSObject {
     private func performLeftClick() {
         let commandReceived = actionHandler.commandReceivedNanoseconds()
         statusItem.button?.isEnabled = false
+        iconAnimation.beganSwap()
         Task { @MainActor [weak self] in
             guard let self else { return }
             _ = await actionHandler.handleMeasuredClick(commandReceivedNanoseconds: commandReceived)
             feedbackPresenter.present(actionHandler.feedback, from: statusItem.button)
             statusItem.button?.toolTip = actionHandler.tooltip
             statusItem.button?.isEnabled = actionHandler.isEnabled
+            iconAnimation.endedSwap()
         }
     }
 }

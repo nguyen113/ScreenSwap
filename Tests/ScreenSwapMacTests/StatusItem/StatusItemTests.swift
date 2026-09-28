@@ -122,13 +122,115 @@ func statusItemRoutesRightClickToMenuAndLeftClickToExactlyOneSwapAction() {
 
 @Test
 @MainActor
+func statusTooltipReportsSelectedAttemptedSucceededAndFailedCounts() {
+    let snapshot = WindowSnapshot(
+        id: WindowID(processIdentifier: 10, accessibilityIdentifier: "window"),
+        sourceDisplayID: 1,
+        frame: CGRect(x: 50, y: 50, width: 100, height: 100)
+    )
+    let windows = StatusFakeWindows(batch: WindowCaptureBatch(windows: [CapturedWindow(snapshot: snapshot, isResizable: true)]))
+    let displays = StatusFakeDisplays(values: [
+        DisplaySnapshot(id: 1, frame: CGRect(x: 0, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: 0, y: 0, width: 500, height: 500)),
+        DisplaySnapshot(id: 2, frame: CGRect(x: 500, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: 500, y: 0, width: 500, height: 500))
+    ])
+    let handler = StatusItemActionHandler(
+        coordinator: SwapCoordinator(authorization: StatusFakeAuthorizer(trusted: true), displays: displays, windowProvider: windows, windowApplying: windows),
+        authorization: StatusFakeAuthorizer(trusted: true)
+    )
+
+    #expect(handler.handleClick() == .success(attempted: 1, succeeded: 1))
+    #expect(handler.tooltip == "ScreenSwap: selected 1, attempted 1, succeeded 1, failed 0.")
+}
+
+@Test
+@MainActor
+func noSelectionTooltipIncludesZeroCounts() {
+    let key = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
+    let snapshot = WindowSnapshot(
+        id: WindowID(processIdentifier: 10, accessibilityIdentifier: "unchecked"),
+        sourceDisplayID: 1,
+        frame: CGRect(x: 50, y: 50, width: 100, height: 100)
+    )
+    let selection = WindowSelectionStore()
+    selection.reconcile([key])
+    selection.setSelected(false, for: key)
+    let windows = StatusFakeWindows(batch: WindowCaptureBatch(windows: [
+        CapturedWindow(snapshot: snapshot, isResizable: true, runtimeKey: key)
+    ]))
+    let displays = StatusFakeDisplays(values: [
+        DisplaySnapshot(id: 1, frame: CGRect(x: 0, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: 0, y: 0, width: 500, height: 500)),
+        DisplaySnapshot(id: 2, frame: CGRect(x: 500, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: 500, y: 0, width: 500, height: 500))
+    ])
+    let handler = StatusItemActionHandler(
+        coordinator: SwapCoordinator(
+            authorization: StatusFakeAuthorizer(trusted: true),
+            displays: displays,
+            windowProvider: windows,
+            windowApplying: windows,
+            selection: selection
+        ),
+        authorization: StatusFakeAuthorizer(trusted: true)
+    )
+
+    #expect(handler.handleClick() == .noSelection)
+    #expect(handler.tooltip == "ScreenSwap: no selection — selected 0, attempted 0, succeeded 0, failed 0.")
+}
+
+@Test
+@MainActor
 func statusItemExitMenuContainsNativeActionThatTerminatesOnlyScreenSwap() {
     let terminator = StatusFakeTerminator()
     let menuController = StatusItemMenuController(terminator: terminator)
 
-    #expect(menuController.menu.items.map(\.title) == ["Exit ScreenSwap"])
+    #expect(menuController.menu.items.map(\.title) == ["About ScreenSwap", "Settings…", "Exit ScreenSwap"])
     menuController.exitSelected(menuController.menu.items[0])
     #expect(terminator.terminateCount == 1)
+}
+
+@Test
+@MainActor
+func statusMenuBuildsFreshDisplayGroupsSelectionAndSpanningWarning() {
+    let firstKey = RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 10)
+    let secondKey = RuntimeWindowKey(processIdentifier: 2, quartzWindowNumber: 20)
+    let displays = [
+        InventoryDisplay(snapshot: DisplaySnapshot(id: 2, frame: CGRect(x: 100, y: 0, width: 100, height: 100), visibleFrame: CGRect(x: 100, y: 0, width: 100, height: 100)), ordinal: 2, name: nil),
+        InventoryDisplay(snapshot: DisplaySnapshot(id: 1, frame: CGRect(x: 0, y: 0, width: 100, height: 100), visibleFrame: CGRect(x: 0, y: 0, width: 100, height: 100)), ordinal: 1, name: "Built-in")
+    ]
+    let inventory = WindowInventory(displays: displays, windows: [
+        InventoryWindow(key: firstKey, displayID: 1, label: "Finder — Desktop", isSelectable: true, isSpanning: false),
+        InventoryWindow(key: secondKey, displayID: 2, label: "Terminal — Shell", isSelectable: true, isSpanning: false),
+        InventoryWindow(key: nil, displayID: 2, label: "Safari — Full Screen", isSelectable: false, isAutomaticallyIncluded: true, isSpanning: false),
+        InventoryWindow(key: nil, displayID: nil, label: "Browser — Wide", isSelectable: false, isSpanning: true)
+    ])
+    let selection = WindowSelectionStore()
+    let menuController = StatusItemMenuController(
+        inventoryProvider: StatusFakeInventory(inventory),
+        selection: selection
+    )
+
+    #expect(menuController.menu.items.map(\.title).contains("Spanning windows — unavailable"))
+    #expect(menuController.menu.items.map(\.title).contains("⚠ Browser — Wide — spanning, unavailable"))
+    #expect(menuController.menu.items.map(\.title).contains("1 — Built-in"))
+    #expect(menuController.menu.items.map(\.title).contains("Display 2"))
+    let warning = menuController.menu.items.first { $0.title.contains("spanning, unavailable") }
+    #expect(warning?.isEnabled == false)
+    let automaticallyIncluded = menuController.menu.items.first { $0.title.contains("included automatically") }
+    #expect(automaticallyIncluded?.state == .on)
+    #expect(automaticallyIncluded?.isEnabled == false)
+    let group = menuController.menu.items.first { $0.title == "1 — Built-in" }!
+    #expect(group.state == .on)
+    menuController.perform(NSSelectorFromString("toggleGroup:"), with: group)
+    #expect(!selection.isSelected(firstKey))
+    #expect(selection.isSelected(secondKey))
+}
+
+@Test
+@MainActor
+func statusMenuShowsPermissionExplanationWithoutSelectionControls() {
+    let menuController = StatusItemMenuController(inventoryProvider: StatusFakeInventory(.permissionRequired))
+    #expect(menuController.menu.items.first?.title == "Accessibility permission required")
+    #expect(menuController.menu.items.first?.isEnabled == false)
+    #expect(menuController.menu.items.map(\.title).contains("Exit ScreenSwap"))
 }
 
 @MainActor
@@ -142,12 +244,16 @@ private final class StatusFakeAuthorizer: AccessibilityAuthorizing {
 
 @MainActor
 private final class StatusFakeDisplays: DisplayProviding {
-    func currentDisplays() throws -> [DisplaySnapshot] { [] }
+    var values: [DisplaySnapshot]
+    init(values: [DisplaySnapshot] = []) { self.values = values }
+    func currentDisplays() throws -> [DisplaySnapshot] { values }
 }
 
 @MainActor
 private final class StatusFakeWindows: WindowProviding, WindowApplying {
-    func captureWindows(displays: [DisplaySnapshot]) -> WindowCaptureBatch { WindowCaptureBatch(windows: []) }
+    var batch: WindowCaptureBatch
+    init(batch: WindowCaptureBatch = WindowCaptureBatch(windows: [])) { self.batch = batch }
+    func captureWindows(displays: [DisplaySnapshot]) -> WindowCaptureBatch { batch }
     func apply(move: WindowMove, isResizable: Bool) -> WindowApplyResult { .success }
 }
 
@@ -158,6 +264,13 @@ private final class StatusFakeMenuPresenter: StatusItemMenuPresenting {
     func present(from button: NSStatusBarButton?) {
         presentCount += 1
     }
+}
+
+@MainActor
+private final class StatusFakeInventory: StatusItemInventoryProviding {
+    let inventory: WindowInventory
+    init(_ inventory: WindowInventory) { self.inventory = inventory }
+    func currentInventory() -> WindowInventory { inventory }
 }
 
 @MainActor

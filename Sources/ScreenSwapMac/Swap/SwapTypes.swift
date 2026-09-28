@@ -65,17 +65,20 @@ public struct CapturedWindow: Equatable, Sendable {
     /// A non-full-screen window whose AX frame fills its source display's
     /// visible frame. It must fill the destination visible frame after swap.
     public let isVisuallyMaximized: Bool
+    public let runtimeKey: RuntimeWindowKey?
 
     public init(
         snapshot: WindowSnapshot,
         isResizable: Bool,
         presentationState: WindowPresentationState = .unknown,
-        isVisuallyMaximized: Bool = false
+        isVisuallyMaximized: Bool = false,
+        runtimeKey: RuntimeWindowKey? = nil
     ) {
         self.snapshot = snapshot
         self.isResizable = isResizable
         self.presentationState = presentationState
         self.isVisuallyMaximized = isVisuallyMaximized
+        self.runtimeKey = runtimeKey
     }
 }
 
@@ -169,6 +172,8 @@ public struct WindowApplyResult: Equatable, Sendable {
 public struct SwapDiagnostics: Equatable, Sendable {
     public let discovered: Int
     public let eligible: Int
+    /// Captured eligible windows selected for this transaction before planning.
+    public let selected: Int
     public let skippedByReason: [String: Int]
     public let planned: Int
     public let attempted: Int
@@ -178,6 +183,7 @@ public struct SwapDiagnostics: Equatable, Sendable {
     public init(
         discovered: Int = 0,
         eligible: Int = 0,
+        selected: Int = 0,
         skippedByReason: [String: Int] = [:],
         planned: Int = 0,
         attempted: Int = 0,
@@ -186,6 +192,7 @@ public struct SwapDiagnostics: Equatable, Sendable {
     ) {
         self.discovered = discovered
         self.eligible = eligible
+        self.selected = selected
         self.skippedByReason = skippedByReason
         self.planned = planned
         self.attempted = attempted
@@ -200,6 +207,7 @@ public enum SwapOutcome: Equatable, Sendable {
     case success(attempted: Int, succeeded: Int)
     case partialFailure(attempted: Int, succeeded: Int, failed: Int)
     case noMoves
+    case noSelection
     case noPermission
     case unsupportedDisplayCount(Int)
     case alreadyRunning
@@ -215,6 +223,8 @@ public extension SwapOutcome {
             "partialFailure"
         case .noMoves:
             "noMoves"
+        case .noSelection:
+            "noSelection"
         case .noPermission:
             "noPermission"
         case .unsupportedDisplayCount:

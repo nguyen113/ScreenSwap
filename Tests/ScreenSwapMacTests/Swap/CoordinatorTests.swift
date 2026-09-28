@@ -110,6 +110,8 @@ private final class FakeRestorer: WindowRestoring {
 private final class FakePlanner: SwapPlanning {
     let log: EventLog
     let moves: [WindowMove]
+    private(set) var plannedWindows: [WindowSnapshot] = []
+    var onPlan: (() -> Void)?
 
     init(log: EventLog, moves: [WindowMove]) {
         self.log = log
@@ -118,6 +120,8 @@ private final class FakePlanner: SwapPlanning {
 
     func makeSwapMoves(windows: [WindowSnapshot], displayA: DisplaySnapshot, displayB: DisplaySnapshot) -> [WindowMove] {
         log.events.append("plan")
+        plannedWindows = windows
+        onPlan?()
         return moves
     }
 }
@@ -140,7 +144,8 @@ private func displays(count: Int) -> [DisplaySnapshot] {
 private func captured(
     _ identifier: String,
     resizable: Bool = true,
-    presentationState: WindowPresentationState = .unknown
+    presentationState: WindowPresentationState = .unknown,
+    runtimeKey: RuntimeWindowKey? = nil
 ) -> CapturedWindow {
     CapturedWindow(
         snapshot: WindowSnapshot(
@@ -149,7 +154,8 @@ private func captured(
             frame: CGRect(x: 100, y: 100, width: 300, height: 200)
         ),
         isResizable: resizable,
-        presentationState: presentationState
+        presentationState: presentationState,
+        runtimeKey: runtimeKey
     )
 }
 
@@ -216,6 +222,7 @@ func coordinatorSeparatesTrustCapturePlanAndApplyPhases() {
     #expect(coordinator.lastDiagnostics == SwapDiagnostics(
         discovered: 3,
         eligible: 2,
+        selected: 2,
         skippedByReason: ["minimized": 1],
         planned: 2,
         attempted: 2,
@@ -333,4 +340,145 @@ func measuredSwapRestoresOnlyWindowsThatRemainNotVisibleAfterVerification() asyn
     #expect(result.outcome == .partialFailure(attempted: 1, succeeded: 0, failed: 1))
     #expect(restorer.restored.map { $0.0 } == [window.snapshot.id])
     #expect(restorer.restored.map { $0.1 } == [false])
+}
+
+@Test
+@MainActor
+func coordinatorMovesOnlyFrozenSelectedRuntimeKeysAndRetainsCompletePreSwapSnapshot() {
+    let firstKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
+    let secondKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 2)
+    let first = captured("selected", runtimeKey: firstKey)
+    let second = captured("unchecked", runtimeKey: secondKey)
+    let store = WindowSelectionStore()
+    store.reconcile([firstKey, secondKey])
+    store.setSelected(false, for: secondKey)
+    let moveFirst = WindowMove(windowID: first.snapshot.id, destinationDisplayID: 2, frame: .zero)
+    let moveSecond = WindowMove(windowID: second.snapshot.id, destinationDisplayID: 2, frame: .zero)
+    let planner = FakePlanner(log: EventLog(), moves: [moveFirst, moveSecond])
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [first, second]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        selection: store
+    )
+
+    #expect(coordinator.swap() == .success(attempted: 1, succeeded: 1))
+    #expect(planner.plannedWindows.map(\.id) == [first.snapshot.id])
+    #expect(windows.applied.map { $0.0.windowID } == [first.snapshot.id])
+    #expect(coordinator.latestPreSwapSnapshots.map(\.id) == [first.snapshot.id, second.snapshot.id])
+    #expect(coordinator.lastDiagnostics == SwapDiagnostics(
+        discovered: 2,
+        eligible: 2,
+        selected: 1,
+        planned: 1,
+        attempted: 1,
+        succeeded: 1,
+        failed: 0
+    ))
+    #expect(coordinator.lastDiagnostics.skippedByReason[WindowSkipReason.unknownSourceDisplay.rawValue] == nil)
+}
+
+@Test
+@MainActor
+func coordinatorReturnsNoSelectionWithoutPlanningOrWriting() {
+    let key = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
+    let window = captured("unchecked", runtimeKey: key)
+    let store = WindowSelectionStore()
+    store.reconcile([key])
+    store.setSelected(false, for: key)
+    let planner = FakePlanner(log: EventLog(), moves: [])
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        selection: store
+    )
+
+    #expect(coordinator.swap() == .noSelection)
+    #expect(planner.plannedWindows.isEmpty)
+    #expect(windows.applied.isEmpty)
+    #expect(coordinator.lastDiagnostics.planned == 0)
+    #expect(coordinator.lastDiagnostics.selected == 0)
+    #expect(coordinator.lastDiagnostics.attempted == 0)
+    #expect(coordinator.lastDiagnostics.succeeded == 0)
+    #expect(coordinator.lastDiagnostics.failed == 0)
+}
+
+@Test
+@MainActor
+func coordinatorIncludesAXConfirmedNativeFullScreenWindowWithoutQuartzRuntimeKey() {
+    let window = captured(
+        "native-full-screen-without-quartz-key",
+        presentationState: WindowPresentationState(isFullScreen: true, canToggleFullScreen: true)
+    )
+    let move = WindowMove(windowID: window.snapshot.id, destinationDisplayID: 2, frame: .zero)
+    let planner = FakePlanner(log: EventLog(), moves: [move])
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        selection: WindowSelectionStore()
+    )
+
+    #expect(coordinator.swap() == .success(attempted: 1, succeeded: 1))
+    #expect(planner.plannedWindows.map(\.id) == [window.snapshot.id])
+    #expect(windows.applied.map { $0.0.windowID } == [window.snapshot.id])
+    #expect(coordinator.lastDiagnostics.selected == 1)
+}
+
+@Test
+@MainActor
+func coordinatorDefaultsAWindowFirstSeenAtCaptureToSelected() {
+    let key = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
+    let window = captured("new-at-capture", runtimeKey: key)
+    let move = WindowMove(windowID: window.snapshot.id, destinationDisplayID: 2, frame: .zero)
+    let store = WindowSelectionStore()
+    let planner = FakePlanner(log: EventLog(), moves: [move])
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        selection: store
+    )
+
+    #expect(coordinator.swap() == .success(attempted: 1, succeeded: 1))
+    #expect(store.isSelected(key))
+    #expect(planner.plannedWindows.map(\.id) == [window.snapshot.id])
+}
+
+@Test
+@MainActor
+func coordinatorDoesNotSubstituteAWindowThatAppearsAfterSelectionFreeze() {
+    let capturedKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
+    let laterKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 2)
+    let window = captured("captured", runtimeKey: capturedKey)
+    let move = WindowMove(windowID: window.snapshot.id, destinationDisplayID: 2, frame: .zero)
+    let store = WindowSelectionStore()
+    let planner = FakePlanner(log: EventLog(), moves: [move])
+    planner.onPlan = { store.reconcile([capturedKey, laterKey]) }
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows,
+        planner: planner,
+        selection: store
+    )
+
+    #expect(coordinator.swap() == .success(attempted: 1, succeeded: 1))
+    #expect(planner.plannedWindows.map(\.id) == [window.snapshot.id])
+    #expect(windows.applied.map { $0.0.windowID } == [window.snapshot.id])
 }

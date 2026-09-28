@@ -12,8 +12,12 @@ public final class SwapCoordinator {
     private let planner: any SwapPlanning
     private let clock: any MonotonicTimeSource
     private let performanceRecorder: (any SwapPerformanceRecording)?
+    private let selection: (any SwapSelectionProviding)?
     private var isRunning = false
     public private(set) var lastDiagnostics = SwapDiagnostics.empty
+    /// Transaction-local AX handles are deliberately not retained. This is the
+    /// latest immutable pre-swap geometry snapshot for a future undo action.
+    public private(set) var latestPreSwapSnapshots: [WindowSnapshot] = []
 
     public init(
         authorization: any AccessibilityAuthorizing,
@@ -23,6 +27,7 @@ public final class SwapCoordinator {
         windowRestorer: (any WindowRestoring)? = nil,
         planner: any SwapPlanning = WindowMappingEngine(),
         windowVerifier: (any WindowVerifying)? = nil,
+        selection: (any SwapSelectionProviding)? = nil,
         clock: any MonotonicTimeSource = MachContinuousTimeSource(),
         performanceRecorder: (any SwapPerformanceRecording)? = nil
     ) {
@@ -35,6 +40,7 @@ public final class SwapCoordinator {
         self.windowVerifier = windowVerifier
         self.clock = clock
         self.performanceRecorder = performanceRecorder
+        self.selection = selection
     }
 
     public func swap() -> SwapOutcome {
@@ -66,12 +72,36 @@ public final class SwapCoordinator {
         let displayA = orderedDisplays[0]
         let displayB = orderedDisplays[1]
         let batch = windowProvider.captureWindows(displays: [displayA, displayB])
-        let snapshots = batch.windows.map(\.snapshot)
+        latestPreSwapSnapshots = batch.windows.map(\.snapshot)
+        selection?.reconcile(Set(batch.windows.compactMap(\.runtimeKey)))
+        let selectedKeys = selection?.frozenSelectedKeys()
+        let selectedWindows = batch.windows.filter { window in
+            guard let selectedKeys else { return true }
+            // Native full-screen Spaces can be AX-confirmed while Quartz omits
+            // their window number. They have no safe persistent selection key,
+            // so preserve their default-included swap behavior.
+            return window.runtimeKey.map { selectedKeys.contains($0) } ?? true
+        }
+        if selectedKeys != nil && selectedWindows.isEmpty && !batch.windows.isEmpty {
+            lastDiagnostics = makeDiagnostics(
+                batch: batch,
+                selectedWindows: [],
+                moves: [],
+                displayA: displayA,
+                displayB: displayB,
+                attempted: 0,
+                succeeded: 0,
+                failed: 0
+            )
+            return .noSelection
+        }
+        let snapshots = selectedWindows.map(\.snapshot)
+        let selectedIDs = Set(snapshots.map(\.id))
         let moves = planner.makeSwapMoves(
             windows: snapshots,
             displayA: displayA,
             displayB: displayB
-        )
+        ).filter { selectedIDs.contains($0.windowID) }
         let orderedMoves = movesPrioritizingNativeFullScreen(
             moves,
             capturedWindows: batch.windows
@@ -91,6 +121,7 @@ public final class SwapCoordinator {
         let failed = attempted - succeeded
         lastDiagnostics = makeDiagnostics(
             batch: batch,
+            selectedWindows: selectedWindows,
             moves: moves,
             displayA: displayA,
             displayB: displayB,
@@ -170,9 +201,34 @@ public final class SwapCoordinator {
         let displayA = orderedDisplays[0]
         let displayB = orderedDisplays[1]
         let batch = windowProvider.captureWindows(displays: [displayA, displayB])
+        latestPreSwapSnapshots = batch.windows.map(\.snapshot)
+        selection?.reconcile(Set(batch.windows.compactMap(\.runtimeKey)))
         let t1 = clock.nowNanoseconds()
-        let snapshots = batch.windows.map(\.snapshot)
+        let selectedKeys = selection?.frozenSelectedKeys()
+        let selectedWindows = batch.windows.filter { window in
+            guard let selectedKeys else { return true }
+            return window.runtimeKey.map { selectedKeys.contains($0) } ?? true
+        }
+        if selectedKeys != nil && selectedWindows.isEmpty && !batch.windows.isEmpty {
+            let now = clock.nowNanoseconds()
+            lastDiagnostics = makeDiagnostics(
+                batch: batch,
+                selectedWindows: [],
+                moves: [],
+                displayA: displayA,
+                displayB: displayB,
+                attempted: 0,
+                succeeded: 0,
+                failed: 0
+            )
+            return finishMeasured(outcome: .noSelection, t0: t0, t1: t1, t2: now, t3: now, t4: now, t5: now,
+                total: batch.totalWindows, eligible: batch.windows.count, skipped: batch.skipped.count,
+                skipReasons: [:], attempted: 0, succeeded: 0, failed: 0, verified: false, timedOut: false)
+        }
+        let snapshots = selectedWindows.map(\.snapshot)
+        let selectedIDs = Set(snapshots.map(\.id))
         let moves = planner.makeSwapMoves(windows: snapshots, displayA: displayA, displayB: displayB)
+            .filter { selectedIDs.contains($0.windowID) }
         let orderedMoves = movesPrioritizingNativeFullScreen(
             moves,
             capturedWindows: batch.windows
@@ -207,6 +263,7 @@ public final class SwapCoordinator {
         let failed = failedIDs.count
         lastDiagnostics = makeDiagnostics(
             batch: batch,
+            selectedWindows: selectedWindows,
             moves: moves,
             displayA: displayA,
             displayB: displayB,
@@ -325,6 +382,7 @@ public final class SwapCoordinator {
 
     private func makeDiagnostics(
         batch: WindowCaptureBatch,
+        selectedWindows: [CapturedWindow],
         moves: [WindowMove],
         displayA: DisplaySnapshot,
         displayB: DisplaySnapshot,
@@ -333,7 +391,10 @@ public final class SwapCoordinator {
         failed: Int
     ) -> SwapDiagnostics {
         let plannedIDs = Set(moves.map(\.windowID))
-        let plannerSkipReasons = batch.windows
+        // Only selected windows reached the planner. An unchecked ordinary
+        // window is an intentional user choice, never an unknown-source or
+        // planner failure in diagnostics.
+        let plannerSkipReasons = selectedWindows
             .filter { !plannedIDs.contains($0.snapshot.id) }
             .map { skipReason(for: $0.snapshot, displayA: displayA, displayB: displayB) }
         let allSkipReasons = batch.skipped.map(\.reason) + plannerSkipReasons
@@ -359,6 +420,7 @@ public final class SwapCoordinator {
         return SwapDiagnostics(
             discovered: batch.totalWindows,
             eligible: batch.windows.count,
+            selected: selectedWindows.count,
             skippedByReason: skipReasonCounts,
             planned: moves.count,
             attempted: attempted,

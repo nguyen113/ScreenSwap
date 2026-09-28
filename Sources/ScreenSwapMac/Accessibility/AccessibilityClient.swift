@@ -7,15 +7,19 @@ public struct AccessibilityApplication: Equatable, Hashable, Sendable {
     public let processIdentifier: Int32
     public let isTerminated: Bool
     public let bundleIdentifier: String?
+    /// Presentation-only. This is never used as a window identity or logged.
+    public let localizedName: String?
 
     public init(
         processIdentifier: Int32,
         isTerminated: Bool = false,
-        bundleIdentifier: String? = nil
+        bundleIdentifier: String? = nil,
+        localizedName: String? = nil
     ) {
         self.processIdentifier = processIdentifier
         self.isTerminated = isTerminated
         self.bundleIdentifier = bundleIdentifier
+        self.localizedName = localizedName
     }
 }
 
@@ -34,6 +38,9 @@ public protocol AccessibilityClient: AnyObject {
     func visibleWindows() throws -> [VisibleWindowSnapshot]
     func windows(for application: AccessibilityApplication) throws -> [AccessibilityWindowHandle]
     func attributes(for window: AccessibilityWindowHandle) throws -> AccessibilityWindowAttributes
+    /// User-facing text is intentionally a separate, best-effort operation.
+    /// A missing title must never make geometry capture or swapping fail.
+    func title(for window: AccessibilityWindowHandle) throws -> String?
     func setSize(_ size: CGSize, for window: AccessibilityWindowHandle) throws
     func setPosition(_ position: CGPoint, for window: AccessibilityWindowHandle) throws
     func raise(_ window: AccessibilityWindowHandle) throws
@@ -44,6 +51,8 @@ public protocol AccessibilityClient: AnyObject {
 }
 
 public extension AccessibilityClient {
+    func title(for window: AccessibilityWindowHandle) throws -> String? { nil }
+
     /// Fakes and clients that cannot activate an application may preserve the
     /// existing behavior. The live adapter overrides this for native
     /// full-screen Spaces, whose AX controls can reject background actions.
@@ -79,7 +88,8 @@ public final class LiveAccessibilityClient: AccessibilityClient {
             AccessibilityApplication(
                 processIdentifier: $0.processIdentifier,
                 isTerminated: $0.isTerminated,
-                bundleIdentifier: $0.bundleIdentifier
+                bundleIdentifier: $0.bundleIdentifier,
+                localizedName: $0.localizedName
             )
         }
     }
@@ -145,6 +155,13 @@ public final class LiveAccessibilityClient: AccessibilityClient {
             sizeIsSettable: sizeSettable,
             presentationState: presentationState
         )
+    }
+
+    public func title(for window: AccessibilityWindowHandle) throws -> String? {
+        guard let element = elements[window.token] else {
+            throw AccessibilityClientError.attributeReadFailed
+        }
+        return try optionalStringAttribute(kAXTitleAttribute as CFString, from: element)
     }
 
     public func setSize(_ size: CGSize, for window: AccessibilityWindowHandle) throws {

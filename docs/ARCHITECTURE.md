@@ -5,22 +5,22 @@
 `ScreenSwapCore` remains the pure domain target, organized into `Geometry/`
 and `Models/`. `ScreenSwapMac` remains one macOS target, organized by boundary:
 `Accessibility/`, `Displays/`, `Swap/`, `StatusItem/`, `Diagnostics/`,
-`Performance/`, and `Selection/`. The latter currently contains only the
-runtime selection identity seam; menu inventory and selection behavior remain
-future work.
+`Performance/`, `Selection/`, `Settings/`, and `HotKey/`. The selection
+boundary owns runtime keys based on process ID plus Quartz window number,
+read-only menu inventory, and non-persistent checked state. Titles are
+presentation-only and never identities.
 
 No additional SwiftPM targets are introduced by this layout refactor.
 
 ```text
-StatusBarController --> SwapCoordinator
-                         |       |
-                         |       +--> AccessibilityAuthorizing
-                         |       +--> DisplayProviding
-                         |       +--> AccessibilityWindowService
-                         |       |      (capture, apply, verify, restore)
-                         |       +--> WindowMappingEngine (ScreenSwapCore)
-                         |
-                         +--> optional performance recorder
+StatusBarController --> SwapCoordinator --> AccessibilityWindowService
+       |                       |             (capture, apply, verify, restore)
+       |                       +--> DisplayProviding + WindowMappingEngine
+       |                       +--> WindowSelectionStore
+       |
+       +--> LiveStatusItemInventoryProvider --> read-only AX/Quartz inventory
+       +--> GlobalHotKeyService --> same left-click swap action
+       +--> Settings / About windows
 ```
 
 ## Core principle
@@ -44,6 +44,12 @@ It must not depend on Accessibility APIs or status-bar UI.
 10. If a window has the expected AX geometry but remains offscreen after the
     bounded verification window, best-effort restore its captured AX frame.
 11. Report non-sensitive counts and outcome to the status item.
+
+At transaction capture, `WindowSelectionStore` is reconciled against fresh
+`RuntimeWindowKey` values and frozen for the remainder of the transaction.
+Only selected captured windows reach the planner and applier. The coordinator
+also retains the complete immutable pre-swap snapshot in memory for a future
+undo feature; no AX handles persist beyond the transaction.
 
 Never discover and mutate windows interleaved.
 
