@@ -10,7 +10,7 @@ Command: `./build-test.sh`
 
 The historical validation entries below retain the test counts current when
 those runs were performed. The current working tree adds fixed-size placement
-and Space-visibility rollback coverage; its 2026-09-28 run reports 74 / 74
+and Space-visibility rollback coverage; its 2026-09-28 run reports 75 / 75
 tests passed.
 
 Status: **AX transaction validated; visual mixed-mode acceptance blocked by macOS Space assignment**

@@ -600,6 +600,16 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
         }
 
         if isResizable {
+            // The failed move may have left this window on a smaller display.
+            // Cross back first, before asking AX to restore a source size that
+            // does not fit there. This mirrors `apply`'s move-before-growing
+            // rule and avoids a clamped or discarded rollback resize.
+            do {
+                try client.setPosition(sourceFrame.origin, for: handle)
+            } catch {
+                if wasZoomed { _ = transitionZoom(handle, to: true) }
+                return failure(.position)
+            }
             do {
                 try client.setSize(sourceFrame.size, for: handle)
             } catch {
@@ -608,6 +618,8 @@ public final class AccessibilityWindowService: WindowProviding, WindowApplying, 
             }
         }
         do {
+            // Resizing can change the allowed origin, so always finish with a
+            // final source position after the size request.
             try client.setPosition(sourceFrame.origin, for: handle)
         } catch {
             if wasZoomed { _ = transitionZoom(handle, to: true) }

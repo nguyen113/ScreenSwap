@@ -106,6 +106,15 @@ else
 fi
 codesign --verify --deep --strict "$APP_BUNDLE"
 
+if $RELEASE; then
+    leaf_authority="$(codesign -dv --verbose=4 "$APP_BUNDLE" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+    if [[ "$leaf_authority" != "Developer ID Application:"* ]]; then
+        echo "error: release build must be signed with Developer ID Application" >&2
+        echo "       actual authority: ${leaf_authority:-unknown}" >&2
+        exit 2
+    fi
+fi
+
 designated_requirement() {
     codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'
 }
