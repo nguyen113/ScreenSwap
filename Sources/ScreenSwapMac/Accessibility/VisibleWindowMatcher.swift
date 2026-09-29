@@ -40,8 +40,12 @@ public enum VisibleWindowMatcher {
         guard !axFrame.isEmpty, !quartzFrame.isEmpty else { return 0 }
 
         let intersection = axFrame.intersection(quartzFrame)
-        let smallerArea = min(axFrame.width * axFrame.height, quartzFrame.width * quartzFrame.height)
-        let overlap = intersection.isNull || smallerArea <= 0 ? 0 : (intersection.width * intersection.height) / smallerArea
+        // Containment alone is not a match: a Finder tooltip or Stage Manager
+        // thumbnail may sit wholly inside a full-size AX window. Compare the
+        // union area so a tiny surface cannot claim that window's identity.
+        let intersectionArea = intersection.isNull ? 0 : intersection.width * intersection.height
+        let unionArea = axFrame.width * axFrame.height + quartzFrame.width * quartzFrame.height - intersectionArea
+        let overlap = unionArea <= 0 ? 0 : intersectionArea / unionArea
         if overlap >= 0.60 {
             return overlap
         }

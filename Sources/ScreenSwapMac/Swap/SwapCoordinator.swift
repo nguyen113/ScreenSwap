@@ -9,6 +9,7 @@ public final class SwapCoordinator {
     private let windowApplying: any WindowApplying
     private let windowRestorer: (any WindowRestoring)?
     private let windowVerifier: (any WindowVerifying)?
+    private let windowVisibilityRecoverer: (any WindowVisibilityRecovering)?
     private let planner: any SwapPlanning
     private let clock: any MonotonicTimeSource
     private let performanceRecorder: (any SwapPerformanceRecording)?
@@ -28,6 +29,7 @@ public final class SwapCoordinator {
         windowRestorer: (any WindowRestoring)? = nil,
         planner: any SwapPlanning = WindowMappingEngine(),
         windowVerifier: (any WindowVerifying)? = nil,
+        windowVisibilityRecoverer: (any WindowVisibilityRecovering)? = nil,
         selection: (any SwapSelectionProviding)? = nil,
         displaySelection: DisplayPairSelectionStore = DisplayPairSelectionStore(),
         clock: any MonotonicTimeSource = MachContinuousTimeSource(),
@@ -40,6 +42,7 @@ public final class SwapCoordinator {
         self.windowRestorer = windowRestorer
         self.planner = planner
         self.windowVerifier = windowVerifier
+        self.windowVisibilityRecoverer = windowVisibilityRecoverer
         self.clock = clock
         self.performanceRecorder = performanceRecorder
         self.selection = selection
@@ -84,13 +87,11 @@ public final class SwapCoordinator {
         selection?.reconcile(batch.knownRuntimeKeys)
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
+            guard window.presentationState.isFullScreen != true else { return false }
             guard let selectedKeys else { return true }
-            // Native full-screen Spaces can be AX-confirmed while Quartz omits
-            // their window number. They have no safe persistent selection key,
-            // so preserve their default-included swap behavior.
             return window.runtimeKey.map { selectedKeys.contains($0) } ?? true
         }
-        if selectedKeys != nil && selectedWindows.isEmpty && !batch.windows.isEmpty {
+        if selectedKeys != nil && selectedWindows.isEmpty && batch.windows.contains(where: { $0.presentationState.isFullScreen != true }) {
             lastDiagnostics = makeDiagnostics(
                 batch: batch,
                 selectedWindows: [],
@@ -110,10 +111,7 @@ public final class SwapCoordinator {
             displayA: displayA,
             displayB: displayB
         ).filter { selectedIDs.contains($0.windowID) }
-        let orderedMoves = movesPrioritizingNativeFullScreen(
-            moves,
-            capturedWindows: batch.windows
-        )
+        let orderedMoves = moves
         let capabilities = Dictionary(uniqueKeysWithValues: batch.windows.map { ($0.snapshot.id, $0.isResizable) })
 
         // A display may disconnect or change scale/arrangement while planning.
@@ -249,10 +247,11 @@ public final class SwapCoordinator {
         let t1 = clock.nowNanoseconds()
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
+            guard window.presentationState.isFullScreen != true else { return false }
             guard let selectedKeys else { return true }
             return window.runtimeKey.map { selectedKeys.contains($0) } ?? true
         }
-        if selectedKeys != nil && selectedWindows.isEmpty && !batch.windows.isEmpty {
+        if selectedKeys != nil && selectedWindows.isEmpty && batch.windows.contains(where: { $0.presentationState.isFullScreen != true }) {
             let now = clock.nowNanoseconds()
             lastDiagnostics = makeDiagnostics(
                 batch: batch,
@@ -272,10 +271,7 @@ public final class SwapCoordinator {
         let selectedIDs = Set(snapshots.map(\.id))
         let moves = planner.makeSwapMoves(windows: snapshots, displayA: displayA, displayB: displayB)
             .filter { selectedIDs.contains($0.windowID) }
-        let orderedMoves = movesPrioritizingNativeFullScreen(
-            moves,
-            capturedWindows: batch.windows
-        )
+        let orderedMoves = moves
         let t2 = clock.nowNanoseconds()
         let capabilities = Dictionary(uniqueKeysWithValues: batch.windows.map { ($0.snapshot.id, $0.isResizable) })
 
@@ -312,6 +308,14 @@ public final class SwapCoordinator {
                 verifiedCandidates.append((move, isResizable))
             } else {
                 applyFailedIDs.insert(move.windowID)
+            }
+        }
+        if let windowVisibilityRecoverer, let windowVerifier {
+            let hiddenCandidates = verifiedCandidates.filter {
+                windowVerifier.verificationStatus(for: $0.0, isResizable: $0.1, tolerance: 2) == .notVisible
+            }
+            for (move, isResizable) in hiddenCandidates {
+                _ = windowVisibilityRecoverer.recoverVisibility(for: move, isResizable: isResizable)
             }
         }
         let t4 = clock.nowNanoseconds()
@@ -416,56 +420,24 @@ public final class SwapCoordinator {
     private func verify(_ candidates: [(WindowMove, Bool)]) async -> (unverifiedIDs: Set<WindowID>, notVisibleIDs: Set<WindowID>, didVerify: Bool, timedOut: Bool) {
         guard !candidates.isEmpty else { return ([], [], windowVerifier != nil, false) }
         guard let windowVerifier else { return (Set(candidates.map { $0.0.windowID }), [], false, false) }
-        var pending = Dictionary(uniqueKeysWithValues: candidates.map { ($0.0.windowID, $0) })
+        let allCandidates = Dictionary(uniqueKeysWithValues: candidates.map { ($0.0.windowID, $0) })
         var latestStatuses: [WindowID: WindowVerificationStatus] = [:]
         let deadline = clock.nowNanoseconds() &+ 500_000_000
-        while !pending.isEmpty {
-            let verifiedIDs = pending.compactMap { id, candidate in
+        while true {
+            let unresolved = Set(allCandidates.compactMap { id, candidate in
                 let status = windowVerifier.verificationStatus(for: candidate.0, isResizable: candidate.1, tolerance: 2)
                 latestStatuses[id] = status
-                if status == .verified {
-                    return id
-                }
-                return nil
+                return status == .verified ? nil : id
             }
-            for id in verifiedIDs {
-                pending.removeValue(forKey: id)
-            }
-            guard !pending.isEmpty else { return ([], [], true, false) }
+            )
+            guard !unresolved.isEmpty else { return ([], [], true, false) }
             guard clock.nowNanoseconds() < deadline else {
-                let unresolved = Set(pending.keys)
                 let notVisible = Set(latestStatuses.compactMap { $0.value == .notVisible ? $0.key : nil })
                     .intersection(unresolved)
                 return (unresolved, notVisible, true, true)
             }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        return ([], [], true, false)
-    }
-
-    /// A native full-screen transition can activate or replace a macOS Space.
-    /// Complete those transitions before placing ordinary windows, so a later
-    /// Space change cannot hide a window that was already moved to the target
-    /// display. Preserve the planner's relative order within each group.
-    private func movesPrioritizingNativeFullScreen(
-        _ moves: [WindowMove],
-        capturedWindows: [CapturedWindow]
-    ) -> [WindowMove] {
-        let nativeFullScreenIDs = Set(
-            capturedWindows.compactMap {
-                $0.presentationState.isFullScreen == true ? $0.snapshot.id : nil
-            }
-        )
-        return moves.enumerated()
-            .sorted { lhs, rhs in
-                let lhsIsNativeFullScreen = nativeFullScreenIDs.contains(lhs.element.windowID)
-                let rhsIsNativeFullScreen = nativeFullScreenIDs.contains(rhs.element.windowID)
-                if lhsIsNativeFullScreen != rhsIsNativeFullScreen {
-                    return lhsIsNativeFullScreen
-                }
-                return lhs.offset < rhs.offset
-            }
-            .map(\.element)
     }
 
     private func finishMeasured(

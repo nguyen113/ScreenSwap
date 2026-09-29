@@ -134,6 +134,9 @@ public enum WindowSkipReason: String, Codable, Equatable, Sendable {
     case transient
     case nonMovable
     case auxiliary
+    /// Native macOS full-screen owns a dedicated Space and is intentionally
+    /// unsupported in v0.1. It must never receive an AX mutation.
+    case nativeFullScreenSpace
     case notVisible
     case presentationStateUnavailable
     case spanningDisplays
@@ -159,6 +162,7 @@ public enum WindowApplyFailureKind: String, Equatable, Sendable {
     case zoom
     case fullScreen
     case presentationTransition
+    case visibility
 }
 
 public struct WindowApplyResult: Equatable, Sendable {
@@ -278,6 +282,14 @@ public protocol WindowApplying: AnyObject {
 public protocol WindowRestoring: AnyObject {
     @MainActor
     func restore(windowID: WindowID, isResizable: Bool) -> WindowApplyResult
+}
+
+/// A bounded, identity-targeted recovery for an already-applied window hidden
+/// by the window manager. The coordinator re-verifies the entire batch after
+/// recovery, since bringing one stage forward can obscure another window.
+@MainActor
+public protocol WindowVisibilityRecovering: AnyObject {
+    func recoverVisibility(for move: WindowMove, isResizable: Bool) -> WindowApplyResult
 }
 
 public enum WindowVerificationStatus: Equatable, Sendable {

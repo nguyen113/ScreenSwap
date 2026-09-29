@@ -7,7 +7,8 @@ private func attributes(
     subrole: String? = nil,
     minimized: Bool = false,
     movable: Bool = true,
-    resizable: Bool = true
+    resizable: Bool = true,
+    presentationState: WindowPresentationState = .unknown
 ) -> AccessibilityWindowAttributes {
     AccessibilityWindowAttributes(
         role: role,
@@ -16,7 +17,8 @@ private func attributes(
         position: CGPoint(x: 10, y: 20),
         size: CGSize(width: 300, height: 200),
         positionIsSettable: movable,
-        sizeIsSettable: resizable
+        sizeIsSettable: resizable,
+        presentationState: presentationState
     )
 }
 
@@ -37,6 +39,16 @@ func windowClassifierRejectsNonWindowsMinimizedSpecialAndImmovable() {
 @Test
 func windowClassifierKeepsMovableNonResizableWindow() {
     #expect(WindowClassifier.classify(attributes(resizable: false)) == .eligible(isResizable: false))
+}
+
+@Test
+func windowClassifierExcludesNativeFullScreenSpacesWithAnExplicitReason() {
+    let nativeFullScreen = attributes(
+        presentationState: WindowPresentationState(isFullScreen: true, canToggleFullScreen: true)
+    )
+
+    #expect(WindowClassifier.classify(nativeFullScreen) == .excluded)
+    #expect(WindowClassifier.skipReason(for: nativeFullScreen) == .nativeFullScreenSpace)
 }
 
 @Test

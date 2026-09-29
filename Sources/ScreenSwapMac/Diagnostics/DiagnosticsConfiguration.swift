@@ -17,18 +17,23 @@ public enum DiagnosticsConfiguration {
         localOverride || environment["SCREENSWAP_DIAGNOSTICS"] == "1"
     }
 
-    public static func append(_ message: String, environment: [String: String]) {
-        guard isEnabled(environment: environment),
+    public static func append(
+        _ message: String,
+        environment: [String: String],
+        localOverride: Bool = false,
+        destination: URL = logURL
+    ) {
+        guard isEnabled(environment: environment, localOverride: localOverride),
               let data = (message + "\n").data(using: .utf8) else {
             return
         }
-        if FileManager.default.fileExists(atPath: logURL.path),
-           let handle = try? FileHandle(forWritingTo: logURL) {
+        if FileManager.default.fileExists(atPath: destination.path),
+           let handle = try? FileHandle(forWritingTo: destination) {
             defer { try? handle.close() }
             _ = try? handle.seekToEnd()
             try? handle.write(contentsOf: data)
         } else {
-            try? data.write(to: logURL, options: .atomic)
+            try? data.write(to: destination, options: .atomic)
         }
     }
 }

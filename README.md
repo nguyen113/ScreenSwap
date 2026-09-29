@@ -11,6 +11,10 @@ active swap pair; all other displays remain untouched. ScreenSwap is built on
 public macOS Accessibility and Quartz APIs and keeps its geometry planning in a
 small, deterministic Swift core.
 
+> [!IMPORTANT]
+> ScreenSwap v0.1 does not move native macOS full-screen Spaces. Exit full
+> screen before swapping that application.
+
 ## Project status
 
 ScreenSwap is an early macOS release. It is useful for its supported
@@ -33,6 +37,66 @@ and macOS Spaces is still important before relying on it in a critical setup.
 - Includes a configurable global shortcut (default: Control–Shift–S),
   Accessibility onboarding, optional launch at login, About, and Reduce Motion
   aware hover feedback.
+
+## ⚠️ Important limitation: native macOS full-screen windows
+
+ScreenSwap v0.1 does **not** move applications that are using macOS **native
+full-screen mode**.
+
+Native full-screen is the mode where macOS creates a separate Space/virtual
+desktop for the application.
+
+For example:
+
+```text
+Finder → View / Enter Full Screen
+Safari → Enter Full Screen
+Xcode → Enter Full Screen
+```
+
+These windows are intentionally left untouched by ScreenSwap.
+
+### Why?
+
+A native full-screen window is managed by macOS as both a window and a
+dedicated Space.
+
+During development, moving these Spaces indirectly by exiting full screen,
+moving the window, and restoring full screen could leave stale WindowServer
+surfaces on the previous display.
+
+To avoid corrupt-looking desktops, ghost windows, or requiring a
+Finder/Dock/macOS restart, ScreenSwap v0.1 does not modify native full-screen
+Spaces.
+
+### Supported
+
+ScreenSwap supports normal windowed layouts, including:
+
+- Normal windows
+- Multiple windows on the same display
+- Overlapping windows
+- 50:50 tiled windows
+- Quarter-screen tiled windows
+- Windowed/maximized windows
+- Different display sizes and resolutions
+- Selecting individual windows to swap
+- Selecting which two displays to swap when 3+ displays are connected
+
+### Not supported in v0.1
+
+- Native macOS full-screen Spaces
+- Moving a native full-screen application from one display to another
+- Multi-display rotation involving more than two displays in one transaction
+
+To include a full-screen application in a swap:
+
+1. Exit macOS native full-screen mode.
+2. Leave the application as a normal or maximized window.
+3. Run ScreenSwap.
+
+Native full-screen support may be investigated for a future release if it can
+be implemented safely using macOS-supported behavior.
 
 ## Requirements
 
@@ -66,8 +130,8 @@ The app intentionally does not implement three-way rotation or general
 N-display routing. Every transaction remains a normal two-display swap.
 
 macOS does not provide a reliable public API for moving arbitrary foreign-app
-windows between Spaces. Native full-screen behavior and Space visibility should
-therefore be validated on your own setup.
+windows between Spaces. ScreenSwap therefore leaves native full-screen Spaces
+untouched in v0.1.
 
 ## Build from source
 

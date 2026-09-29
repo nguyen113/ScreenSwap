@@ -276,7 +276,7 @@ func coordinatorSeparatesTrustCapturePlanAndApplyPhases() {
 
 @Test
 @MainActor
-func coordinatorPrioritizesNativeFullScreenMovesOverPlannerOrder() {
+func coordinatorExcludesNativeFullScreenMovesBeforePlanning() {
     let ordinary = captured("ordinary")
     let nativeFullScreen = captured(
         "native-full-screen",
@@ -285,10 +285,7 @@ func coordinatorPrioritizesNativeFullScreenMovesOverPlannerOrder() {
             canToggleFullScreen: true
         )
     )
-    let moves = [
-        WindowMove(windowID: ordinary.snapshot.id, destinationDisplayID: 2, frame: .zero),
-        WindowMove(windowID: nativeFullScreen.snapshot.id, destinationDisplayID: 2, frame: .zero)
-    ]
+    let moves = [WindowMove(windowID: ordinary.snapshot.id, destinationDisplayID: 2, frame: .zero)]
     let windows = FakeWindows(
         batch: WindowCaptureBatch(windows: [ordinary, nativeFullScreen])
     )
@@ -300,11 +297,8 @@ func coordinatorPrioritizesNativeFullScreenMovesOverPlannerOrder() {
         planner: FakePlanner(log: EventLog(), moves: moves)
     )
 
-    #expect(coordinator.swap() == .success(attempted: 2, succeeded: 2))
-    #expect(windows.applied.map { $0.0.windowID } == [
-        nativeFullScreen.snapshot.id,
-        ordinary.snapshot.id
-    ])
+    #expect(coordinator.swap() == .success(attempted: 1, succeeded: 1))
+    #expect(windows.applied.map { $0.0.windowID } == [ordinary.snapshot.id])
 }
 
 @Test
@@ -455,14 +449,16 @@ func coordinatorReturnsNoSelectionWithoutPlanningOrWriting() {
 
 @Test
 @MainActor
-func coordinatorIncludesAXConfirmedNativeFullScreenWindowWithoutQuartzRuntimeKey() {
+func coordinatorReturnsNoMovesForOnlyNativeFullScreenWindow() {
     let window = captured(
         "native-full-screen-without-quartz-key",
         presentationState: WindowPresentationState(isFullScreen: true, canToggleFullScreen: true)
     )
-    let move = WindowMove(windowID: window.snapshot.id, destinationDisplayID: 2, frame: .zero)
-    let planner = FakePlanner(log: EventLog(), moves: [move])
-    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let planner = FakePlanner(log: EventLog(), moves: [])
+    let windows = FakeWindows(batch: WindowCaptureBatch(
+        windows: [window],
+        skipped: [WindowSkip(processIdentifier: 10, reason: .nativeFullScreenSpace)]
+    ))
     let coordinator = SwapCoordinator(
         authorization: FakeAuthorizer(trusted: true),
         displays: FakeDisplays(displays(count: 2)),
@@ -472,10 +468,11 @@ func coordinatorIncludesAXConfirmedNativeFullScreenWindowWithoutQuartzRuntimeKey
         selection: WindowSelectionStore()
     )
 
-    #expect(coordinator.swap() == .success(attempted: 1, succeeded: 1))
-    #expect(planner.plannedWindows.map(\.id) == [window.snapshot.id])
-    #expect(windows.applied.map { $0.0.windowID } == [window.snapshot.id])
-    #expect(coordinator.lastDiagnostics.selected == 1)
+    #expect(coordinator.swap() == .noMoves)
+    #expect(planner.plannedWindows.isEmpty)
+    #expect(windows.applied.isEmpty)
+    #expect(coordinator.lastDiagnostics.selected == 0)
+    #expect(coordinator.lastDiagnostics.skippedByReason["nativeFullScreenSpace"] == 1)
 }
 
 @Test

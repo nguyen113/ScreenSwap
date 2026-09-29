@@ -34,3 +34,23 @@ func visibleWindowMatcherRejectsDifferentApplicationsAndUnrelatedFrames() {
         )]
     ) == nil)
 }
+
+@Test
+func visibleWindowMatcherPrefersPhysicalWindowOverContainedTooltip() {
+    let frame = CGRect(x: 0, y: 30, width: 961, height: 968)
+    let tooltip = VisibleWindowSnapshot(processIdentifier: 100,
+        frame: CGRect(x: 16, y: 46, width: 66, height: 20), windowNumber: 9)
+    let window = VisibleWindowSnapshot(processIdentifier: 100, frame: frame, windowNumber: 41)
+    #expect(VisibleWindowMatcher.matchIndex(processIdentifier: 100, frame: frame,
+                                          candidates: [tooltip, window]) == 1)
+    #expect(VisibleWindowMatcher.matchIndex(processIdentifier: 100, frame: frame,
+                                          candidates: [tooltip]) == nil)
+}
+
+@Test
+func visibleWindowMatcherRejectsStageManagerThumbnailForFullSizeAXWindow() {
+    #expect(VisibleWindowMatcher.matchIndex(processIdentifier: 100,
+        frame: CGRect(x: 0, y: 30, width: 961, height: 968),
+        candidates: [VisibleWindowSnapshot(processIdentifier: 100,
+                     frame: CGRect(x: 0, y: 30, width: 126, height: 126), windowNumber: 41)]) == nil)
+}

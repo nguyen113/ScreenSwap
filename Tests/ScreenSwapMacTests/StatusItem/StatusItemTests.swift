@@ -204,7 +204,7 @@ func statusMenuBuildsFreshDisplayGroupsSelectionAndSpanningWarning() {
     let inventory = WindowInventory(displays: displays, windows: [
         InventoryWindow(key: firstKey, displayID: 1, label: "Finder — Desktop", isSelectable: true, isSpanning: false),
         InventoryWindow(key: secondKey, displayID: 2, label: "Terminal — Shell", isSelectable: true, isSpanning: false),
-        InventoryWindow(key: nil, displayID: 2, label: "Safari — Full Screen", isSelectable: false, isAutomaticallyIncluded: true, isSpanning: false),
+        InventoryWindow(key: nil, displayID: 2, label: "Safari — Full Screen", isSelectable: false, isNativeFullScreenUnsupported: true, isSpanning: false),
         InventoryWindow(key: nil, displayID: nil, label: "Browser — Wide", isSelectable: false, isSpanning: true)
     ])
     let selection = WindowSelectionStore()
@@ -219,9 +219,10 @@ func statusMenuBuildsFreshDisplayGroupsSelectionAndSpanningWarning() {
     #expect(menuController.menu.items.map(\.title).contains("Display 2"))
     let warning = menuController.menu.items.first { $0.title.contains("spanning, unavailable") }
     #expect(warning?.isEnabled == false)
-    let automaticallyIncluded = menuController.menu.items.first { $0.title.contains("included automatically") }
-    #expect(automaticallyIncluded?.state == .on)
-    #expect(automaticallyIncluded?.isEnabled == false)
+    let nativeFullScreen = menuController.menu.items.first { $0.title.contains("native full-screen, unsupported") }
+    #expect(nativeFullScreen?.state == .off)
+    #expect(nativeFullScreen?.isEnabled == false)
+    #expect(nativeFullScreen?.toolTip?.contains("Exit full screen first") == true)
     let group = menuController.menu.items.first { $0.title == "    All windows" }!
     #expect(group.state == .on)
     menuController.perform(NSSelectorFromString("toggleGroup:"), with: group)

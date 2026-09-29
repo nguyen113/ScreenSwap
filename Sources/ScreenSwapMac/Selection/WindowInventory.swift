@@ -14,6 +14,9 @@ public struct InventoryWindow: Equatable, Sendable {
     /// a persistent per-window choice. Eligible instances remain part of the
     /// swap transaction by default and are shown as included automatically.
     public let isAutomaticallyIncluded: Bool
+    /// Deliberately unsupported native full-screen Space. This row remains
+    /// visible for explanation but cannot enter window selection.
+    public let isNativeFullScreenUnsupported: Bool
     public let isSpanning: Bool
 
     public init(
@@ -22,11 +25,13 @@ public struct InventoryWindow: Equatable, Sendable {
         label: String,
         isSelectable: Bool,
         isAutomaticallyIncluded: Bool = false,
+        isNativeFullScreenUnsupported: Bool = false,
         isSpanning: Bool
     ) {
         self.key = key; self.displayID = displayID; self.label = label
         self.isSelectable = isSelectable; self.isSpanning = isSpanning
         self.isAutomaticallyIncluded = isAutomaticallyIncluded
+        self.isNativeFullScreenUnsupported = isNativeFullScreenUnsupported
     }
 }
 

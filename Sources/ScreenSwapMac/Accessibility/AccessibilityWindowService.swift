@@ -3,8 +3,14 @@ import Foundation
 import os
 import ScreenSwapCore
 
+private struct AccessibilityWindowCandidate {
+    let handle: AccessibilityWindowHandle
+    let attributes: AccessibilityWindowAttributes
+    let frame: CGRect
+}
+
 @MainActor
-public final class AccessibilityWindowService: DisplayPairWindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowInventoryProviding, DisplayCandidateCounting {
+public final class AccessibilityWindowService: DisplayPairWindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowVisibilityRecovering, WindowInventoryProviding, DisplayCandidateCounting {
     private static let diagnosticLogger = Logger(subsystem: "com.screenswap.app", category: "diagnostics")
     private let client: any AccessibilityClient
     /// Inventory discovery owns a separate client cache so opening the menu
@@ -13,6 +19,9 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
     private let processIdentifier: Int32
     private var lookup: [WindowID: AccessibilityWindowHandle] = [:]
     private var presentationStates: [WindowID: WindowPresentationState] = [:]
+    private var presentationModes: [WindowID: CapturedPresentationMode] = [:]
+    private var runtimeKeysByWindowID: [WindowID: RuntimeWindowKey] = [:]
+    private var visibilityRecoveryIDs: Set<WindowID> = []
     private var visuallyMaximizedWindowIDs: Set<WindowID> = []
     /// Quartz window numbers are opaque and contain no titles or document
     /// content. Retain only the current capture's maximized windows so a
@@ -69,22 +78,51 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         for application in applications where application.processIdentifier != processIdentifier && !application.isTerminated {
             guard !isAuxiliaryApplication(application),
                   let handles = try? reader.windows(for: application) else { continue }
-            for handle in handles {
+            let candidates = handles.compactMap { handle -> AccessibilityWindowCandidate? in
                 guard let attributes = try? reader.attributes(for: handle),
                       attributes.role == "AXWindow",
-                      !isTransient(attributes) else { continue }
+                      !isTransient(attributes) else { return nil }
                 let frame = CGRect(origin: attributes.position, size: attributes.size)
-                guard !frame.isEmpty else { continue }
-                let isSpanning = WindowInventoryClassifier.spans(frame, displays: snapshots)
+                guard !frame.isEmpty else { return nil }
+                return AccessibilityWindowCandidate(handle: handle, attributes: attributes, frame: frame)
+            }
+
+            // Reserve every native full-screen Quartz observation before
+            // ordinary windows match. AX enumeration order is not a window
+            // identity guarantee, so a hidden same-process window cannot
+            // inherit a native full-screen surface's visibility record.
+            for candidate in candidates where candidate.attributes.presentationState.isFullScreen == true {
+                if let visibleIndex = VisibleWindowMatcher.matchIndex(
+                    processIdentifier: application.processIdentifier,
+                    frame: candidate.frame,
+                    candidates: unmatchedVisibleWindows
+                ) {
+                    unmatchedVisibleWindows.remove(at: visibleIndex)
+                }
+            }
+
+            for candidate in candidates {
+                let attributes = candidate.attributes
+                let frame = candidate.frame
+                let isNativeFullScreenUnsupported = attributes.presentationState.isFullScreen == true
+                // A native full-screen Space can report geometry crossing a
+                // display boundary. Keep it visible as an unsupported window
+                // instead of presenting the unrelated spanning-window state.
+                let isSpanning = !isNativeFullScreenUnsupported && WindowInventoryClassifier.spans(frame, displays: snapshots)
                 let displayID = WindowInventoryClassifier.owner(of: frame, displays: snapshots)
                 guard isSpanning || displayID != nil else { continue }
                 ordinal += 1
-                let visibleIndex = VisibleWindowMatcher.matchIndex(
-                    processIdentifier: application.processIdentifier,
-                    frame: frame,
-                    candidates: unmatchedVisibleWindows
-                )
-                let visible = visibleIndex.map { unmatchedVisibleWindows.remove(at: $0) }
+                let visible: VisibleWindowSnapshot?
+                if isNativeFullScreenUnsupported {
+                    visible = nil
+                } else {
+                    let visibleIndex = VisibleWindowMatcher.matchIndex(
+                        processIdentifier: application.processIdentifier,
+                        frame: frame,
+                        candidates: unmatchedVisibleWindows
+                    )
+                    visible = visibleIndex.map { unmatchedVisibleWindows.remove(at: $0) }
+                }
                 let key = visible.flatMap { visibleWindow in
                     visibleWindow.windowNumber.map {
                         RuntimeWindowKey(processIdentifier: application.processIdentifier, quartzWindowNumber: $0)
@@ -94,21 +132,16 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                     if case .eligible = WindowClassifier.classify(attributes) { return true }
                     return false
                 }()
-                // Quartz can omit native full-screen windows in a different
-                // Space. That is the only AX-only window form capture admits,
-                // so only it may be shown as included automatically.
-                let isAutomaticallyIncluded = !isSpanning && isEligible &&
-                    key == nil && attributes.presentationState.isFullScreen == true
                 windows.append(InventoryWindow(
                     key: key,
                     displayID: displayID,
                     label: WindowInventoryClassifier.label(
                         applicationName: application.localizedName,
-                        title: try? reader.title(for: handle),
+                        title: try? reader.title(for: candidate.handle),
                         ordinal: ordinal
                     ),
                     isSelectable: !isSpanning && isEligible && key != nil,
-                    isAutomaticallyIncluded: isAutomaticallyIncluded,
+                    isNativeFullScreenUnsupported: isNativeFullScreenUnsupported,
                     isSpanning: isSpanning
                 ))
             }
@@ -151,6 +184,9 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
               Set(selectedDisplays.map(\.id)).isSubset(of: Set(activeDisplays.map(\.id))) else {
             lookup = [:]
             presentationStates = [:]
+            presentationModes = [:]
+            runtimeKeysByWindowID = [:]
+            visibilityRecoveryIDs = []
             visuallyMaximizedWindowIDs = []
             maximizedWindowNumbers = []
             displaysByID = [:]
@@ -165,6 +201,8 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         var totalWindows = 0
         var nextLookup: [WindowID: AccessibilityWindowHandle] = [:]
         var nextPresentationStates: [WindowID: WindowPresentationState] = [:]
+        var nextPresentationModes: [WindowID: CapturedPresentationMode] = [:]
+        var nextRuntimeKeys: [WindowID: RuntimeWindowKey] = [:]
         var nextSourceFrames: [WindowID: CGRect] = [:]
         var nextVisuallyMaximizedWindowIDs: Set<WindowID> = []
         var nextMaximizedWindowNumbers: Set<UInt32> = []
@@ -181,6 +219,9 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         } catch {
             lookup = [:]
             presentationStates = [:]
+            presentationModes = [:]
+            runtimeKeysByWindowID = [:]
+            visibilityRecoveryIDs = []
             visuallyMaximizedWindowIDs = []
             maximizedWindowNumbers = []
             displaysByID = [:]
@@ -198,6 +239,9 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         } catch {
             lookup = [:]
             presentationStates = [:]
+            presentationModes = [:]
+            runtimeKeysByWindowID = [:]
+            visibilityRecoveryIDs = []
             visuallyMaximizedWindowIDs = []
             maximizedWindowNumbers = []
             displaysByID = [:]
@@ -230,6 +274,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                 continue
             }
 
+            var candidates: [AccessibilityWindowCandidate] = []
             for handle in handles {
                 totalWindows += 1
                 candidateOrdinal += 1
@@ -244,7 +289,33 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                 recordDiagnostic(
                     "[ScreenSwapCandidate] ordinal=\(candidateOrdinal) role=\(attributes.role) subrole=\(attributes.subrole ?? "none") minimized=\(attributes.isMinimized) movable=\(attributes.positionIsSettable) resizable=\(attributes.sizeIsSettable) full_screen=\(format(attributes.presentationState.isFullScreen)) frame=\(format(CGRect(origin: attributes.position, size: attributes.size)))"
                 )
+                candidates.append(AccessibilityWindowCandidate(
+                    handle: handle,
+                    attributes: attributes,
+                    frame: CGRect(origin: attributes.position, size: attributes.size)
+                ))
+            }
 
+            // Reserve all native full-screen surfaces before processing an
+            // ordinary candidate. AX order is not an identity guarantee.
+            for candidate in candidates where candidate.attributes.presentationState.isFullScreen == true {
+                if let visibleIndex = VisibleWindowMatcher.matchIndex(
+                    processIdentifier: application.processIdentifier,
+                    frame: candidate.frame,
+                    candidates: unmatchedVisibleWindows
+                ) {
+                    unmatchedVisibleWindows.remove(at: visibleIndex)
+                }
+                skipped.append(WindowSkip(
+                    processIdentifier: application.processIdentifier,
+                    reason: .nativeFullScreenSpace
+                ))
+            }
+
+            for candidate in candidates where candidate.attributes.presentationState.isFullScreen != true {
+                let handle = candidate.handle
+                let attributes = candidate.attributes
+                let frame = candidate.frame
                 guard case let .eligible(isResizable) = WindowClassifier.classify(attributes) else {
                     skipped.append(WindowSkip(
                         processIdentifier: application.processIdentifier,
@@ -252,18 +323,15 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                     ))
                     continue
                 }
-                let frame = CGRect(origin: attributes.position, size: attributes.size)
                 let visibleIndex = VisibleWindowMatcher.matchIndex(
                     processIdentifier: application.processIdentifier,
                     frame: frame,
                     candidates: unmatchedVisibleWindows
                 )
-                // Native full-screen windows can occupy a dedicated visible
-                // Space that Quartz omits from this process's normal
-                // on-screen list. Keep the normal Quartz requirement for all
-                // other windows (including Stage Manager-hidden ones), but
-                // allow an AX-confirmed full-screen window through.
-                guard visibleIndex != nil || attributes.presentationState.isFullScreen == true else {
+                // Keep the Quartz visibility requirement for ordinary windows,
+                // including Stage Manager-hidden surfaces. Native full-screen
+                // candidates were already reserved and excluded above.
+                guard visibleIndex != nil else {
                     skipped.append(WindowSkip(processIdentifier: application.processIdentifier, reason: .notVisible))
                     continue
                 }
@@ -275,16 +343,21 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                 // topology before checking whether this window belongs to the
                 // selected pair. This prevents a third-display window from
                 // being assigned to a selected display by two-display logic.
-                let isSpanning = WindowInventoryClassifier.spans(frame, displays: activeDisplays)
+                let rawIsSpanning = WindowInventoryClassifier.spans(frame, displays: activeDisplays)
                 guard let sourceDisplayID = WindowInventoryClassifier.owner(of: frame, displays: activeDisplays),
                       let sourceDisplay = activeDisplays.first(where: { $0.id == sourceDisplayID }) else {
                     skipped.append(WindowSkip(
                         processIdentifier: application.processIdentifier,
-                        reason: isSpanning ? .spanningDisplays : .unknownSourceDisplay
+                        reason: rawIsSpanning ? .spanningDisplays : .unknownSourceDisplay
                     ))
                     continue
                 }
-                let retainedMaximizedIntent = visibleWindow?.windowNumber.map(maximizedWindowNumbers.contains) == true
+                let tileFrame = isResizable ? canonicalizeTileEdges(frame, on: sourceDisplay) : frame
+                let isSpanning = WindowInventoryClassifier.spans(tileFrame, displays: activeDisplays)
+                let stillApproximatelyMaximized = frame.width >= sourceDisplay.visibleFrame.width * 0.8 &&
+                    frame.height >= sourceDisplay.visibleFrame.height * 0.8
+                let retainedMaximizedIntent = stillApproximatelyMaximized &&
+                    visibleWindow?.windowNumber.map(maximizedWindowNumbers.contains) == true
                 let fillsSourceVisibleFrame = fillsVisibleFrame(frame, on: sourceDisplay)
                 let isVisuallyMaximized = attributes.presentationState.isFullScreen != true &&
                     (retainedMaximizedIntent || fillsSourceVisibleFrame)
@@ -324,7 +397,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                 if isVisuallyMaximized {
                     snapshotFrame = sourceDisplay.visibleFrame
                 } else {
-                    snapshotFrame = canonicalizeVisibleEdges(frame, on: sourceDisplay)
+                    snapshotFrame = canonicalizeVisibleEdges(tileFrame, on: sourceDisplay)
                 }
                 let snapshot = WindowSnapshot(
                     id: id,
@@ -342,6 +415,12 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                 )
                 nextLookup[id] = handle
                 nextPresentationStates[id] = attributes.presentationState
+                nextPresentationModes[id] = CapturedPresentationMode.classify(
+                    attributes.presentationState,
+                    fillsSourceVisibleFrame: fillsSourceVisibleFrame,
+                    retainedMaximizedIntent: retainedMaximizedIntent
+                )
+                if let runtimeKey { nextRuntimeKeys[id] = runtimeKey }
                 // Preserve the actual AX geometry for a later position-only
                 // restore. `snapshotFrame` may be canonicalized to express a
                 // maximized layout intent and must not replace this value.
@@ -349,7 +428,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                 if isVisuallyMaximized {
                     nextVisuallyMaximizedWindowIDs.insert(id)
                 }
-                if (isVisuallyMaximized || attributes.presentationState.isZoomed == true),
+                if isVisuallyMaximized,
                    let windowNumber = visibleWindow?.windowNumber {
                     nextMaximizedWindowNumbers.insert(windowNumber)
                 }
@@ -358,6 +437,9 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
 
         lookup = nextLookup
         presentationStates = nextPresentationStates
+        presentationModes = nextPresentationModes
+        runtimeKeysByWindowID = nextRuntimeKeys
+        visibilityRecoveryIDs = []
         visuallyMaximizedWindowIDs = nextVisuallyMaximizedWindowIDs
         maximizedWindowNumbers = nextMaximizedWindowNumbers
         displaysByID = Dictionary(uniqueKeysWithValues: activeDisplays.map { ($0.id, $0) })
@@ -376,7 +458,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         for (offset, capturedWindow) in captured.enumerated() {
             let sourceDisplay = activeDisplays.first { $0.id == capturedWindow.snapshot.sourceDisplayID }
             recordDiagnostic(
-                "[ScreenSwapCaptureWindow] ordinal=\(offset + 1) source=\(capturedWindow.snapshot.sourceDisplayID) frame=\(format(capturedWindow.snapshot.frame)) source_visible=\(sourceDisplay.map { format($0.visibleFrame) } ?? "none") visual_maximized=\(capturedWindow.isVisuallyMaximized) zoom=\(format(capturedWindow.presentationState.isZoomed)) zoom_button=\(capturedWindow.presentationState.canToggleZoom)"
+                "[ScreenSwapCaptureWindow] ordinal=\(offset + 1) pid=\(capturedWindow.snapshot.id.processIdentifier) runtime_key=\(runtimeKeysByWindowID[capturedWindow.snapshot.id] != nil) mode=\(presentationModes[capturedWindow.snapshot.id]?.rawValue ?? "ordinary") source=\(capturedWindow.snapshot.sourceDisplayID) frame=\(format(capturedWindow.snapshot.frame)) source_visible=\(sourceDisplay.map { format($0.visibleFrame) } ?? "none") visual_maximized=\(capturedWindow.isVisuallyMaximized) zoom=\(format(capturedWindow.presentationState.isZoomed)) zoom_button=\(capturedWindow.presentationState.canToggleZoom)"
             )
         }
         return WindowCaptureBatch(
@@ -453,14 +535,42 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         )
     }
 
+    /// Native tiling decoration may extend one or two points beyond a shared
+    /// display edge. Snap only complete half/quarter cells; arbitrary spans
+    /// retain their full-topology classification.
+    private func canonicalizeTileEdges(_ frame: CGRect, on display: DisplaySnapshot) -> CGRect {
+        let visible = display.visibleFrame
+        let tolerance: CGFloat = 2
+        func snap(_ value: CGFloat, edges: [CGFloat]) -> CGFloat? {
+            edges.first { abs(value - $0) <= tolerance }
+        }
+        guard let minX = snap(frame.minX, edges: [visible.minX, visible.midX, visible.maxX]),
+              let maxX = snap(frame.maxX, edges: [visible.minX, visible.midX, visible.maxX]),
+              let minY = snap(frame.minY, edges: [visible.minY, visible.midY, visible.maxY]),
+              let maxY = snap(frame.maxY, edges: [visible.minY, visible.midY, visible.maxY]),
+              maxX > minX, maxY > minY else { return frame }
+        let halfWidth = abs((maxX - minX) - visible.width / 2) <= tolerance
+        let halfHeight = abs((maxY - minY) - visible.height / 2) <= tolerance
+        guard halfWidth || halfHeight else { return frame }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
     public func apply(move: WindowMove, isResizable: Bool) -> WindowApplyResult {
         guard let handle = lookup[move.windowID] else {
             return WindowApplyResult(succeeded: false, failure: .staleWindow)
         }
+        if presentationModes[move.windowID] == .ordinary || presentationModes[move.windowID] == .windowedMaximized {
+            return client.withGeometryUpdates(for: handle) {
+                applyCaptured(move: move, isResizable: isResizable, handle: handle)
+            }
+        }
+        return applyCaptured(move: move, isResizable: isResizable, handle: handle)
+    }
 
+    private func applyCaptured(move: WindowMove, isResizable: Bool, handle: AccessibilityWindowHandle) -> WindowApplyResult {
         let presentation = presentationStates[move.windowID] ?? .unknown
-        let wasZoomed = presentation.isZoomed == true
-        let wasFullScreen = presentation.isFullScreen == true
+        let wasZoomed = presentationModes[move.windowID] == .nativeZoomed
+        let wasFullScreen = presentationModes[move.windowID] == .nativeFullScreen
         let wasVisuallyMaximized = visuallyMaximizedWindowIDs.contains(move.windowID)
 
         recordDiagnostic(
@@ -615,6 +725,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
            shouldResize,
            !fillsDestinationVisibleFrame {
             recordDiagnostic("[ScreenSwapApplyFailure] ordinal=\(diagnosticWindowOrdinals[move.windowID] ?? 0) phase=windowed_maximize_readback")
+            restoreOriginalPresentation()
             return WindowApplyResult(succeeded: false, failure: .size)
         }
 
@@ -643,9 +754,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         for move: WindowMove,
         isResizable: Bool
     ) -> CGRect {
-        let presentation = presentationStates[move.windowID] ?? .unknown
-
-        if presentation.isFullScreen == true,
+        if presentationModes[move.windowID] == .nativeFullScreen,
            let destination = displaysByID[move.destinationDisplayID] {
             // Native full-screen does not respect the destination's dock or
             // menu-bar inset. Anchor the temporary window to the complete
@@ -653,8 +762,8 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
             return destination.frame
         }
 
-        if presentation.isZoomed == true ||
-            visuallyMaximizedWindowIDs.contains(move.windowID),
+        if presentationModes[move.windowID] == .nativeZoomed ||
+            presentationModes[move.windowID] == .windowedMaximized,
            let destination = displaysByID[move.destinationDisplayID] {
             return destination.visibleFrame
         }
@@ -683,19 +792,34 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
     }
 
     public func restore(windowID: WindowID, isResizable: Bool) -> WindowApplyResult {
+        guard let handle = lookup[windowID] else {
+            return WindowApplyResult(succeeded: false, failure: .staleWindow)
+        }
+        if presentationModes[windowID] == .ordinary || presentationModes[windowID] == .windowedMaximized {
+            return client.withGeometryUpdates(for: handle) {
+                restoreCaptured(windowID: windowID, isResizable: isResizable, handle: handle)
+            }
+        }
+        return restoreCaptured(windowID: windowID, isResizable: isResizable, handle: handle)
+    }
+
+    private func restoreCaptured(
+        windowID: WindowID,
+        isResizable: Bool,
+        handle: AccessibilityWindowHandle
+    ) -> WindowApplyResult {
         func failure(_ kind: WindowApplyFailureKind) -> WindowApplyResult {
             recordDiagnostic(
                 "[ScreenSwapRollback] ordinal=\(diagnosticWindowOrdinals[windowID] ?? 0) result=failed phase=\(kind.rawValue)"
             )
             return WindowApplyResult(succeeded: false, failure: kind)
         }
-        guard let handle = lookup[windowID],
-              let sourceFrame = sourceFrames[windowID] else {
+        guard let sourceFrame = sourceFrames[windowID] else {
             return failure(.staleWindow)
         }
 
         let presentation = presentationStates[windowID] ?? .unknown
-        let wasZoomed = presentation.isZoomed == true
+        let wasZoomed = presentationModes[windowID] == .nativeZoomed
         guard !wasZoomed || presentation.canToggleZoom else {
             return failure(.zoom)
         }
@@ -787,6 +911,27 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         }
     }
 
+    public func recoverVisibility(for move: WindowMove, isResizable: Bool) -> WindowApplyResult {
+        guard let handle = lookup[move.windowID],
+              presentationModes[move.windowID] == .ordinary || presentationModes[move.windowID] == .windowedMaximized,
+              runtimeKeysByWindowID[move.windowID] != nil,
+              !visibilityRecoveryIDs.contains(move.windowID),
+              verificationStatus(for: move, isResizable: isResizable, tolerance: 2) == .notVisible else {
+            return WindowApplyResult(succeeded: false, failure: .visibility)
+        }
+        visibilityRecoveryIDs.insert(move.windowID)
+        recordDiagnostic("[ScreenSwapVisibilityRecovery] ordinal=\(diagnosticWindowOrdinals[move.windowID] ?? 0) phase=raise")
+        do {
+            try client.raise(handle)
+        } catch {
+            return WindowApplyResult(succeeded: false, failure: .visibility)
+        }
+        if verificationStatus(for: move, isResizable: isResizable, tolerance: 2) == .pending {
+            return apply(move: move, isResizable: isResizable)
+        }
+        return .success
+    }
+
     public func verificationStatus(
         for move: WindowMove,
         isResizable: Bool,
@@ -797,7 +942,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
             return .unavailable
         }
         let actual = CGRect(origin: attributes.position, size: attributes.size)
-        if presentationStates[move.windowID]?.isFullScreen == true,
+        if presentationModes[move.windowID] == .nativeFullScreen,
            let destination = displaysByID[move.destinationDisplayID] {
             let stateMatches = attributes.presentationState.isFullScreen == true
             let destinationMatches = destination.frame.contains(
@@ -812,28 +957,32 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
             abs(actual.width - expected.width) <= tolerance &&
             abs(actual.height - expected.height) <= tolerance
         )
-        guard positionMatches && sizeMatches else { return .pending }
-
-        // AX can retain a correct global frame for a window that macOS has
-        // left in an inactive Space. An ordinary window is only a successful
-        // swap when Quartz reports it on screen after all presentation
-        // transitions have completed. Native full-screen windows are exempt:
-        // Quartz may omit their dedicated Space even while AX confirms their
-        // full-screen state and destination frame above.
         guard let visibleWindows = try? client.visibleWindows() else {
             return .unavailable
         }
-        let isVisible = VisibleWindowMatcher.matchIndex(
-            processIdentifier: move.windowID.processIdentifier,
-            frame: actual,
-            candidates: visibleWindows
-        ) != nil
-        if !isVisible {
-            recordDiagnostic(
-                "[ScreenSwapVerification] ordinal=\(diagnosticWindowOrdinals[move.windowID] ?? 0) result=not_visible"
-            )
+        let visibleWindow: VisibleWindowSnapshot?
+        if let key = runtimeKeysByWindowID[move.windowID] {
+            visibleWindow = visibleWindows.first {
+                $0.processIdentifier == key.processIdentifier && $0.windowNumber == key.quartzWindowNumber
+            }
+        } else {
+            visibleWindow = VisibleWindowMatcher.matchIndex(
+                processIdentifier: move.windowID.processIdentifier,
+                frame: actual,
+                candidates: visibleWindows
+            ).map { visibleWindows[$0] }
         }
-        return isVisible ? .verified : .notVisible
+        let identityMatches = visibleWindow != nil
+        let isVisible = visibleWindow.map {
+            abs($0.frame.minX - actual.minX) <= 24 && abs($0.frame.minY - actual.minY) <= 24 &&
+            abs($0.frame.width - actual.width) <= 48 && abs($0.frame.height - actual.height) <= 48
+        } ?? false
+        let geometryMatches = positionMatches && sizeMatches
+        let result: WindowVerificationStatus = !geometryMatches ? .pending : (isVisible ? .verified : .notVisible)
+        recordDiagnostic(
+            "[ScreenSwapVerification] ordinal=\(diagnosticWindowOrdinals[move.windowID] ?? 0) identity_match=\(identityMatches) geometry_match=\(geometryMatches) visible=\(isVisible) result=\(result) actual=\(format(actual)) expected=\(format(expected)) quartz_frame=\(visibleWindow.map { format($0.frame) } ?? "none")"
+        )
+        return result
     }
 
     private func recordDiagnostic(_ message: @autoclosure () -> String) {
@@ -843,7 +992,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         ) else { return }
         let resolvedMessage = message()
         Self.diagnosticLogger.notice("\(resolvedMessage, privacy: .public)")
-        DiagnosticsConfiguration.append(resolvedMessage, environment: ProcessInfo.processInfo.environment)
+        DiagnosticsConfiguration.append(resolvedMessage, environment: ProcessInfo.processInfo.environment, localOverride: localDiagnosticsEnabled)
     }
 
     private func hasExpectedSize(_ actual: CGSize, expected: CGSize) -> Bool {

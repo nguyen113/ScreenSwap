@@ -340,7 +340,9 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
             if !isSelectedDisplay { group.toolTip = "Select this display to change its windows." }
             menu.addItem(group)
             for child in children {
-                let title = child.isAutomaticallyIncluded
+                let title = child.isNativeFullScreenUnsupported
+                    ? "        \(child.label) — native full-screen, unsupported"
+                    : child.isAutomaticallyIncluded
                     ? "        \(child.label) — included automatically"
                     : "        \(child.label)"
                 let item = NSMenuItem(title: title, action: #selector(toggleWindow(_:)), keyEquivalent: "")
@@ -350,7 +352,9 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
                     ? .on
                     : child.key.map { menuState(selection?.selectionState(for: [$0]) ?? .on) } ?? .off
                 item.isEnabled = inventory.supportsSelection && isSelectedDisplay && child.isSelectable && child.key != nil
-                if child.isAutomaticallyIncluded && isSelectedDisplay {
+                if child.isNativeFullScreenUnsupported {
+                    item.toolTip = "Native macOS full-screen Spaces cannot be swapped safely in this version. Exit full screen first to include this window."
+                } else if child.isAutomaticallyIncluded && isSelectedDisplay {
                     item.toolTip = "Included automatically; no Quartz window identity is available for selection."
                 } else if child.isAutomaticallyIncluded {
                     item.toolTip = "Select this display to include this native full-screen window."

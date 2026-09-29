@@ -10,6 +10,8 @@ private final class FakeAccessibilityClient: AccessibilityClient {
     var applicationsCallCount = 0
     var visibleWindowValues: [VisibleWindowSnapshot]?
     var visibleWindowsCallCount = 0
+    var windowNumbersByToken: [String: UInt32] = [:]
+    var hiddenTokens: Set<String> = []
     var failingVisibleWindowEnumeration = false
     var handlesByPID: [Int32: [AccessibilityWindowHandle]] = [:]
     var attributesByToken: [String: AccessibilityWindowAttributes] = [:]
@@ -18,12 +20,17 @@ private final class FakeAccessibilityClient: AccessibilityClient {
     var titlesByToken: [String: String?] = [:]
     var failingTitleReads: Set<String> = []
     var failingSizeWrites = false
+    var enhancedUIEnabled = false
+    var assistiveTechnologyActive = false
     /// Simulates macOS rejecting a resize that exceeds the current display's
     /// available size while the window center is still on that display.
     var sizeLimitAtCurrentCenter: (frame: CGRect, maximumSize: CGSize)?
     var ignoresSizeWritesUntilZoom = false
     var sizeWriteHeightAdjustment: CGFloat = 0
     var failingPositionWrites = false
+    var failingRaiseActions = false
+    var hidesOnDestinationTokens: Set<String> = []
+    var hideAnotherOnRaise: String?
     var failingZoomActions = false
     var failingFullScreenActions = false
     var failingFullScreenTokens: Set<String> = []
@@ -56,10 +63,11 @@ private final class FakeAccessibilityClient: AccessibilityClient {
         }
         return appValues.flatMap { application in
             (handlesByPID[application.processIdentifier] ?? []).compactMap { handle in
-                guard let attributes = attributesByToken[handle.token] else { return nil }
+                guard !hiddenTokens.contains(handle.token), let attributes = attributesByToken[handle.token] else { return nil }
                 return VisibleWindowSnapshot(
                     processIdentifier: application.processIdentifier,
-                    frame: CGRect(origin: attributes.position, size: attributes.size)
+                    frame: CGRect(origin: attributes.position, size: attributes.size),
+                    windowNumber: windowNumbersByToken[handle.token]
                 )
             }
         }
@@ -110,10 +118,19 @@ private final class FakeAccessibilityClient: AccessibilityClient {
         }
     }
 
+    func withGeometryUpdates(for window: AccessibilityWindowHandle, _ updates: () -> WindowApplyResult) -> WindowApplyResult {
+        AccessibilityGeometryUpdateScope.perform(
+            assistiveTechnologyActive: assistiveTechnologyActive,
+            readEnhancedUI: { self.enhancedUIEnabled },
+            writeEnhancedUI: { self.enhancedUIEnabled = $0; return true },
+            updates: updates
+        )
+    }
+
     func setSize(_ size: CGSize, for window: AccessibilityWindowHandle) throws {
         writeEvents.append("size:\(window.token):\(size.width)x\(size.height)")
         if failingSizeWrites { throw AccessibilityClientError.writeFailed }
-        if ignoresSizeWritesUntilZoom { return }
+        if ignoresSizeWritesUntilZoom || enhancedUIEnabled { return }
         if let limit = sizeLimitAtCurrentCenter,
            let current = attributesByToken[window.token],
            limit.frame.contains(CGPoint(
@@ -136,11 +153,17 @@ private final class FakeAccessibilityClient: AccessibilityClient {
         if failingPositionWrites { throw AccessibilityClientError.writeFailed }
         if !deferGeometryUpdates {
             updateGeometry(window.token, position: position)
+            if hidesOnDestinationTokens.contains(window.token), position.x >= 1000 {
+                hiddenTokens.insert(window.token)
+            }
         }
     }
 
     func raise(_ window: AccessibilityWindowHandle) throws {
         writeEvents.append("raise:\(window.token)")
+        if failingRaiseActions { throw AccessibilityClientError.actionFailed }
+        hiddenTokens.remove(window.token)
+        if let hideAnotherOnRaise { hiddenTokens.insert(hideAnotherOnRaise) }
     }
 
     func activateApplication(for window: AccessibilityWindowHandle) throws {
@@ -645,6 +668,7 @@ func accessibilityServiceRestoresZoomedWindowToDestinationVisibleFrame() {
     client.appValues = [AccessibilityApplication(processIdentifier: 100)]
     client.handlesByPID[100] = [handle]
     client.attributesByToken[handle.token] = serviceAttributes(
+        position: CGPoint(x: 0, y: 20), size: CGSize(width: 1000, height: 780),
         presentationState: WindowPresentationState(
             isZoomed: true,
             canToggleZoom: true
@@ -1075,7 +1099,7 @@ func accessibilityServiceRetainsMaximizedIntentWhenUnequalDisplayGeometryChanges
 
 @Test
 @MainActor
-func accessibilityServiceCapturesAXConfirmedFullScreenWindowWhenQuartzOmitsItsSpace() {
+func accessibilityServiceSkipsAXConfirmedFullScreenWindowWhenQuartzOmitsItsSpace() {
     let client = FakeAccessibilityClient()
     let handle = AccessibilityWindowHandle(token: "full-screen-not-in-quartz")
     client.appValues = [AccessibilityApplication(processIdentifier: 100)]
@@ -1091,14 +1115,100 @@ func accessibilityServiceCapturesAXConfirmedFullScreenWindowWhenQuartzOmitsItsSp
     let service = AccessibilityWindowService(client: client, processIdentifier: 999)
     let batch = service.captureWindows(displays: serviceDisplays)
 
-    #expect(batch.windows.count == 1)
-    #expect(batch.windows[0].presentationState.isFullScreen == true)
-    #expect(!batch.skipped.contains { $0.reason == .notVisible })
+    #expect(batch.windows.isEmpty)
+    #expect(batch.skipped.contains(WindowSkip(processIdentifier: 100, reason: .nativeFullScreenSpace)))
+    #expect(client.writeEvents.isEmpty)
 }
 
 @Test
 @MainActor
-func accessibilityServiceAutomaticallyIncludesOnlyAXOnlyNativeFullScreenInventoryWindows() {
+func accessibilityServiceReservesNativeFullScreenQuartzIdentityBeforeSkippingIt() {
+    let client = FakeAccessibilityClient()
+    let application = AccessibilityApplication(processIdentifier: 100)
+    let nativeFullScreen = AccessibilityWindowHandle(token: "native-full-screen")
+    let hiddenOrdinary = AccessibilityWindowHandle(token: "hidden-ordinary")
+    let sharedFrame = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+    client.appValues = [application]
+    client.handlesByPID[application.processIdentifier] = [nativeFullScreen, hiddenOrdinary]
+    client.attributesByToken[nativeFullScreen.token] = serviceAttributes(
+        position: sharedFrame.origin,
+        size: sharedFrame.size,
+        presentationState: WindowPresentationState(isFullScreen: true, canToggleFullScreen: true)
+    )
+    // AX can enumerate a window in another Space with the same geometry, but
+    // Quartz exposes only the native full-screen surface in this capture.
+    client.attributesByToken[hiddenOrdinary.token] = serviceAttributes(
+        position: sharedFrame.origin,
+        size: sharedFrame.size
+    )
+    client.visibleWindowValues = [VisibleWindowSnapshot(
+        processIdentifier: application.processIdentifier,
+        frame: sharedFrame,
+        windowNumber: 41
+    )]
+
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: serviceDisplays)
+
+    #expect(batch.windows.isEmpty)
+    #expect(batch.knownRuntimeKeys.isEmpty)
+    #expect(batch.skipped.contains(WindowSkip(
+        processIdentifier: application.processIdentifier,
+        reason: .nativeFullScreenSpace
+    )))
+    #expect(batch.skipped.contains(WindowSkip(
+        processIdentifier: application.processIdentifier,
+        reason: .notVisible
+    )))
+    #expect(client.writeEvents.isEmpty)
+}
+
+@Test
+@MainActor
+func accessibilityServiceReservesNativeFullScreenQuartzIdentityRegardlessOfAXOrder() {
+    let client = FakeAccessibilityClient()
+    let application = AccessibilityApplication(processIdentifier: 100)
+    let nativeFullScreen = AccessibilityWindowHandle(token: "native-full-screen")
+    let hiddenOrdinary = AccessibilityWindowHandle(token: "hidden-ordinary")
+    let sharedFrame = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+    client.appValues = [application]
+    // The hidden ordinary window arrives first from AX, but Quartz only
+    // exposes the native full-screen surface.
+    client.handlesByPID[application.processIdentifier] = [hiddenOrdinary, nativeFullScreen]
+    client.attributesByToken[nativeFullScreen.token] = serviceAttributes(
+        position: sharedFrame.origin,
+        size: sharedFrame.size,
+        presentationState: WindowPresentationState(isFullScreen: true, canToggleFullScreen: true)
+    )
+    client.attributesByToken[hiddenOrdinary.token] = serviceAttributes(
+        position: sharedFrame.origin,
+        size: sharedFrame.size
+    )
+    client.visibleWindowValues = [VisibleWindowSnapshot(
+        processIdentifier: application.processIdentifier,
+        frame: sharedFrame,
+        windowNumber: 41
+    )]
+
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: serviceDisplays)
+    let inventory = service.inventory(displays: serviceDisplays.enumerated().map {
+        InventoryDisplay(snapshot: $0.element, ordinal: $0.offset + 1, name: nil)
+    })
+
+    #expect(batch.windows.isEmpty)
+    #expect(batch.knownRuntimeKeys.isEmpty)
+    #expect(batch.skipped.filter { $0.reason == .nativeFullScreenSpace }.count == 1)
+    #expect(batch.skipped.filter { $0.reason == .notVisible }.count == 1)
+    #expect(inventory.windows.count == 2)
+    #expect(inventory.windows.allSatisfy { $0.key == nil && !$0.isSelectable })
+    #expect(inventory.windows.filter(\.isNativeFullScreenUnsupported).count == 1)
+    #expect(client.writeEvents.isEmpty)
+}
+
+@Test
+@MainActor
+func accessibilityServiceShowsNativeFullScreenInventoryWindowsAsUnsupported() {
     let client = FakeAccessibilityClient()
     let application = AccessibilityApplication(processIdentifier: 100)
     let nativeFullScreen = AccessibilityWindowHandle(token: "native-full-screen")
@@ -1119,7 +1229,8 @@ func accessibilityServiceAutomaticallyIncludesOnlyAXOnlyNativeFullScreenInventor
     })
 
     #expect(inventory.windows.count == 2)
-    #expect(inventory.windows.map(\.isAutomaticallyIncluded) == [true, false])
+    #expect(inventory.windows.map(\.isAutomaticallyIncluded) == [false, false])
+    #expect(inventory.windows.map(\.isNativeFullScreenUnsupported) == [true, false])
     #expect(inventory.windows.allSatisfy { !$0.isSelectable })
 }
 
@@ -1165,8 +1276,9 @@ func accessibilityServiceUsesFullTopologyBeforeFilteringToSelectedPair() {
     let batch = service.captureWindows(activeDisplays: activeDisplays, selectedDisplays: [activeDisplays[0], activeDisplays[2]])
 
     #expect(batch.windows.map(\.snapshot.sourceDisplayID).sorted() == [1, 3])
-    #expect(batch.skipped.filter { $0.reason == .unselectedDisplay }.count == 2)
+    #expect(batch.skipped.filter { $0.reason == .unselectedDisplay }.count == 1)
     #expect(batch.skipped.filter { $0.reason == .spanningDisplays }.count == 1)
+    #expect(batch.skipped.contains(WindowSkip(processIdentifier: 100, reason: .nativeFullScreenSpace)))
     #expect(batch.knownRuntimeKeys == [
         RuntimeWindowKey(processIdentifier: 100, quartzWindowNumber: 1),
         RuntimeWindowKey(processIdentifier: 100, quartzWindowNumber: 2),
@@ -1177,7 +1289,7 @@ func accessibilityServiceUsesFullTopologyBeforeFilteringToSelectedPair() {
 
 @Test
 @MainActor
-func accessibilityServiceRestoresFullScreenStateAfterRelocatingWindow() {
+func accessibilityServiceSkipsNativeFullScreenBeforeAnyWrite() {
     let client = FakeAccessibilityClient()
     let handle = AccessibilityWindowHandle(token: "full-screen")
     client.appValues = [AccessibilityApplication(processIdentifier: 100)]
@@ -1191,60 +1303,9 @@ func accessibilityServiceRestoresFullScreenStateAfterRelocatingWindow() {
 
     let service = AccessibilityWindowService(client: client, processIdentifier: 999)
     let batch = service.captureWindows(displays: serviceDisplays)
-    let id = batch.windows[0].snapshot.id
-    #expect(service.apply(
-        move: WindowMove(windowID: id, destinationDisplayID: 2, frame: CGRect(x: 1100, y: 200, width: 500, height: 400)),
-        isResizable: true
-    ) == .success)
-    #expect(client.writeEvents == [
-        "activate:full-screen",
-        "fullScreen:full-screen",
-        "size:full-screen:1000.0x800.0",
-        "position:full-screen:1000.0,0.0",
-        "fullScreen:full-screen"
-    ])
-}
-
-@Test
-@MainActor
-func accessibilityServiceCapturesAndMovesNativeFullScreenWindowWithTemporarilyLockedGeometry() {
-    let client = FakeAccessibilityClient()
-    let handle = AccessibilityWindowHandle(token: "native-full-screen-locked-geometry")
-    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
-    client.handlesByPID[100] = [handle]
-    client.attributesByToken[handle.token] = serviceAttributes(
-        movable: false,
-        resizable: false,
-        presentationState: WindowPresentationState(
-            isFullScreen: true,
-            canToggleFullScreen: true
-        )
-    )
-    // Quartz does not list a window in a different full-screen Space.
-    client.visibleWindowValues = []
-
-    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
-    let batch = service.captureWindows(displays: serviceDisplays)
-
-    #expect(batch.windows.count == 1)
-    #expect(batch.windows[0].isResizable == false)
-    #expect(batch.skipped.isEmpty)
-
-    #expect(service.apply(
-        move: WindowMove(
-            windowID: batch.windows[0].snapshot.id,
-            destinationDisplayID: 2,
-            frame: CGRect(x: 1100, y: 200, width: 400, height: 300)
-        ),
-        isResizable: false
-    ) == .success)
-    #expect(client.writeEvents == [
-        "activate:native-full-screen-locked-geometry",
-        "fullScreen:native-full-screen-locked-geometry",
-        "size:native-full-screen-locked-geometry:1000.0x800.0",
-        "position:native-full-screen-locked-geometry:1000.0,0.0",
-        "fullScreen:native-full-screen-locked-geometry"
-    ])
+    #expect(batch.windows.isEmpty)
+    #expect(batch.skipped.contains(WindowSkip(processIdentifier: 100, reason: .nativeFullScreenSpace)))
+    #expect(client.writeEvents.isEmpty)
 }
 
 @Test
@@ -1296,36 +1357,28 @@ func accessibilityServiceRoundTripsMixedNativeAndWindowedFullScreenModes() {
             displayA: mainDisplay,
             displayB: secondDisplay
         )
-        #expect(moves.count == 2)
+        #expect(moves.count == 1)
         for move in moves {
             let captured = batch.windows.first { $0.snapshot.id == move.windowID }!
             #expect(service.apply(move: move, isResizable: captured.isResizable) == .success)
         }
     }
 
-    swapOnce()
+    let nativeFrame = mainDisplay.frame
+    for _ in 0..<4 {
+        swapOnce()
+    }
     #expect(client.attributesByToken[nativeFullScreen.token]!.presentationState.isFullScreen == true)
     #expect(CGRect(
         origin: client.attributesByToken[nativeFullScreen.token]!.position,
         size: client.attributesByToken[nativeFullScreen.token]!.size
-    ) == secondDisplay.frame)
-    #expect(client.attributesByToken[windowedFullScreen.token]!.presentationState.isFullScreen != true)
-    #expect(CGRect(
-        origin: client.attributesByToken[windowedFullScreen.token]!.position,
-        size: client.attributesByToken[windowedFullScreen.token]!.size
-    ) == mainDisplay.visibleFrame)
-
-    swapOnce()
-    #expect(client.attributesByToken[nativeFullScreen.token]!.presentationState.isFullScreen == true)
-    #expect(CGRect(
-        origin: client.attributesByToken[nativeFullScreen.token]!.position,
-        size: client.attributesByToken[nativeFullScreen.token]!.size
-    ) == mainDisplay.frame)
+    ) == nativeFrame)
     #expect(client.attributesByToken[windowedFullScreen.token]!.presentationState.isFullScreen != true)
     #expect(CGRect(
         origin: client.attributesByToken[windowedFullScreen.token]!.position,
         size: client.attributesByToken[windowedFullScreen.token]!.size
     ) == secondDisplay.visibleFrame)
+    #expect(!client.writeEvents.contains { $0.contains(nativeFullScreen.token) })
 }
 
 @Test
@@ -1344,27 +1397,17 @@ func accessibilityServiceDoesNotInferPresentationStateFromBoundsAndContinuesAfte
         )
     )
     client.attributesByToken[ordinary.token] = serviceAttributes(position: CGPoint(x: 1200, y: 100))
-    client.failingFullScreenTokens = [unsupported.token]
 
     let service = AccessibilityWindowService(client: client, processIdentifier: 999)
     let batch = service.captureWindows(displays: serviceDisplays)
-    let unsupportedID = batch.windows.first { $0.presentationState.isFullScreen == true }!.snapshot.id
     let ordinaryID = batch.windows.first { $0.presentationState == .unknown }!.snapshot.id
 
-    #expect(service.apply(
-        move: WindowMove(windowID: unsupportedID, destinationDisplayID: 2, frame: CGRect(x: 1100, y: 100, width: 300, height: 200)),
-        isResizable: true
-    ) == WindowApplyResult(succeeded: false, failure: .fullScreen))
+    #expect(batch.skipped.contains(WindowSkip(processIdentifier: 100, reason: .nativeFullScreenSpace)))
     #expect(service.apply(
         move: WindowMove(windowID: ordinaryID, destinationDisplayID: 1, frame: CGRect(x: 100, y: 100, width: 300, height: 200)),
         isResizable: true
     ) == .success)
-    #expect(client.writeEvents == [
-        "activate:unsupported",
-        "fullScreen:unsupported",
-        "size:ordinary:300.0x200.0",
-        "position:ordinary:100.0,100.0"
-    ])
+    #expect(client.writeEvents == ["size:ordinary:300.0x200.0", "position:ordinary:100.0,100.0"])
 }
 
 @Test
@@ -1444,6 +1487,7 @@ func accessibilityServiceLeavesPresentationWindowUntouchedWhenTransitionDoesNotC
     client.appValues = [AccessibilityApplication(processIdentifier: 100)]
     client.handlesByPID[100] = [handle]
     let original = serviceAttributes(
+        position: serviceDisplays[0].visibleFrame.origin, size: serviceDisplays[0].visibleFrame.size,
         presentationState: WindowPresentationState(isZoomed: true, canToggleZoom: true)
     )
     client.attributesByToken[handle.token] = original
@@ -1510,4 +1554,307 @@ func accessibilityServiceDoesNotCaptureOrWriteWhenOnScreenWindowListCannotBeRead
     #expect(batch.windows.isEmpty)
     #expect(batch.failures.map(\.kind) == [.visibleWindowEnumeration])
     #expect(client.writeEvents.isEmpty)
+}
+
+
+/// Realistic same-app tiles expose a truthy zoom control without being maximized.
+@Test(arguments: [2, 4])
+@MainActor
+func ambiguousZoomTilesRetainDistinctGeometryAndIdentityForFourSwaps(tileCount: Int) async {
+    let displays = [
+        DisplaySnapshot(id: 10, frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                        visibleFrame: CGRect(x: 0, y: 30, width: 1920, height: 968)),
+        DisplaySnapshot(id: 20, frame: CGRect(x: 1920, y: 267, width: 1280, height: 800),
+                        visibleFrame: CGRect(x: 1920, y: 297, width: 1280, height: 770))
+    ]
+    func frames(on display: DisplaySnapshot) -> [CGRect] {
+        let f = display.visibleFrame
+        return (0..<tileCount).map { index in
+            CGRect(x: f.minX + CGFloat(index % 2) * f.width / 2,
+                   y: f.minY + CGFloat(index / 2) * f.height / 2,
+                   width: f.width / 2, height: tileCount == 2 ? f.height : f.height / 2)
+        }
+    }
+    let client = FakeAccessibilityClient()
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    let handles = (0..<tileCount).map { AccessibilityWindowHandle(token: "tile-\($0)") }
+    client.handlesByPID[100] = handles
+    for (index, handle) in handles.enumerated() {
+        let frame = frames(on: displays[0])[index]
+        client.attributesByToken[handle.token] = serviceAttributes(
+            position: frame.origin, size: frame.size,
+            presentationState: WindowPresentationState(isZoomed: true, canToggleZoom: true))
+        client.windowNumbersByToken[handle.token] = UInt32(41 + index)
+    }
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let coordinator = SwapCoordinator(authorization: TileAuthorizer(), displays: TileDisplays(values: displays),
+                                      windowProvider: service, windowApplying: service, windowVerifier: service)
+    for invocation in 1...4 {
+        let result = await coordinator.swapMeasured()
+        #expect(result.outcome == .success(attempted: tileCount, succeeded: tileCount))
+        #expect(coordinator.lastDiagnostics.planned == tileCount)
+        let destination = displays[invocation.isMultiple(of: 2) ? 0 : 1]
+        let expected = frames(on: destination)
+        for (index, handle) in handles.enumerated() {
+            let attributes = client.attributesByToken[handle.token]!
+            #expect(CGRect(origin: attributes.position, size: attributes.size) == expected[index])
+        }
+        let visible = try! client.visibleWindows()
+        #expect(visible.count == tileCount)
+        #expect(Set(visible.compactMap(\.windowNumber)).count == tileCount)
+        #expect(Set(visible.map { "\($0.frame)" }).count == tileCount)
+    }
+    #expect(!client.writeEvents.contains { $0.hasPrefix("zoom:") || $0.hasPrefix("raise:") })
+}
+
+@MainActor
+private final class TileAuthorizer: AccessibilityAuthorizing {
+    var isTrusted = true
+    func requestAccess() {}
+}
+
+@MainActor
+private final class TileDisplays: DisplayProviding {
+    let values: [DisplaySnapshot]
+    init(values: [DisplaySnapshot]) { self.values = values }
+    func currentDisplays() throws -> [DisplaySnapshot] { values }
+}
+
+@Test(arguments: [false, true])
+@MainActor
+func overlappingSameAppWindowsVerifyOnlyTheirOwnQuartzIdentity(hideSecond: Bool) {
+    let client = FakeAccessibilityClient()
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    let handles = [AccessibilityWindowHandle(token: "overlap-41"), AccessibilityWindowHandle(token: "overlap-42")]
+    client.handlesByPID[100] = handles
+    for (index, handle) in handles.enumerated() {
+        client.attributesByToken[handle.token] = serviceAttributes()
+        client.windowNumbersByToken[handle.token] = UInt32(41 + index)
+    }
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: serviceDisplays)
+    let moves = WindowMappingEngine().makeSwapMoves(windows: batch.windows.map(\.snapshot),
+                                                   displayA: serviceDisplays[0], displayB: serviceDisplays[1])
+    #expect(moves.count == 2)
+    for move in moves { #expect(service.apply(move: move, isResizable: true) == .success) }
+    #expect(moves[0].frame == moves[1].frame)
+    if hideSecond { client.hiddenTokens.insert(handles[1].token) }
+    #expect(service.verificationStatus(for: moves[0], isResizable: true, tolerance: 2) == .verified)
+    #expect(service.verificationStatus(for: moves[1], isResizable: true, tolerance: 2) ==
+            (hideSecond ? .notVisible : .verified))
+}
+
+@Test
+@MainActor
+func recaptureReplacesQuartzIdentitiesAndRejectsStaleMoves() {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "reused-handle")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes()
+    client.windowNumbersByToken[handle.token] = 41
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let old = service.captureWindows(displays: serviceDisplays).windows[0]
+    client.windowNumbersByToken[handle.token] = 42
+    let current = service.captureWindows(displays: serviceDisplays).windows[0]
+    client.windowNumbersByToken[handle.token] = 41
+    let move = WindowMove(windowID: current.snapshot.id, destinationDisplayID: 1, frame: current.snapshot.frame)
+    #expect(service.verificationStatus(for: move, isResizable: true, tolerance: 2) == .notVisible)
+    #expect(service.verificationStatus(for: WindowMove(windowID: old.snapshot.id, destinationDisplayID: 1,
+                                                   frame: old.snapshot.frame), isResizable: true, tolerance: 2) == .unavailable)
+}
+
+
+@Test
+@MainActor
+func retiledMaximizedWindowDropsRetainedIntentEvenWithTruthyZoomControl() {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "retiled")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.windowNumbersByToken[handle.token] = 41
+    client.attributesByToken[handle.token] = serviceAttributes(position: .zero, size: serviceDisplays[0].visibleFrame.size)
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    #expect(service.captureWindows(displays: serviceDisplays).windows[0].isVisuallyMaximized)
+    client.attributesByToken[handle.token] = serviceAttributes(
+        position: .zero, size: CGSize(width: 500, height: 800),
+        presentationState: WindowPresentationState(isZoomed: true, canToggleZoom: true))
+    let batch = service.captureWindows(displays: serviceDisplays)
+    #expect(!batch.windows[0].isVisuallyMaximized)
+    let move = WindowMappingEngine().makeSwapMoves(windows: batch.windows.map(\.snapshot),
+        displayA: serviceDisplays[0], displayB: serviceDisplays[1])[0]
+    #expect(service.apply(move: move, isResizable: true) == .success)
+    #expect(client.attributesByToken[handle.token]!.size == CGSize(width: 500, height: 800))
+    #expect(!client.writeEvents.contains { $0.hasPrefix("zoom:") })
+    #expect(service.restore(windowID: move.windowID, isResizable: true) == .success)
+    #expect(!client.writeEvents.contains { $0.hasPrefix("zoom:") })
+}
+
+
+@Test(arguments: [false, true])
+@MainActor
+func geometryUpdatesSuspendEnhancedUIAndRestoreItOnSuccessOrFailure(failWrite: Bool) {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "animated-tile")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes(position: .zero, size: CGSize(width: 500, height: 800))
+    client.enhancedUIEnabled = true
+    client.failingPositionWrites = failWrite
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let id = service.captureWindows(displays: serviceDisplays).windows[0].snapshot.id
+    let target = CGRect(x: 1000, y: 0, width: 400, height: 700)
+    let result = service.apply(move: WindowMove(windowID: id, destinationDisplayID: 2, frame: target), isResizable: true)
+    #expect(result.succeeded == !failWrite)
+    #expect(client.attributesByToken[handle.token]!.size == target.size)
+    #expect(client.enhancedUIEnabled)
+    #expect(!client.writeEvents.contains { $0.hasPrefix("zoom:") || $0.hasPrefix("raise:") })
+}
+
+@Test
+@MainActor
+func rollbackSuspendsEnhancedUIAndRestoresTheOriginalFrame() {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "rollback-animated-tile")
+    let source = CGRect(x: 0, y: 0, width: 500, height: 800)
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes(position: source.origin, size: source.size)
+    client.enhancedUIEnabled = true
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let captured = service.captureWindows(displays: serviceDisplays).windows[0]
+    let destination = CGRect(x: 1_000, y: 0, width: 400, height: 700)
+    let move = WindowMove(windowID: captured.snapshot.id, destinationDisplayID: 2, frame: destination)
+    #expect(service.apply(move: move, isResizable: true) == .success)
+    #expect(client.attributesByToken[handle.token]!.position == destination.origin)
+    #expect(service.restore(windowID: move.windowID, isResizable: true) == .success)
+    #expect(client.attributesByToken[handle.token]!.position == source.origin)
+    #expect(client.attributesByToken[handle.token]!.size == source.size)
+    #expect(client.enhancedUIEnabled)
+}
+
+@Test
+@MainActor
+func geometryUpdatesKeepEnhancedUIWhenAssistiveTechnologyIsActive() {
+    var enabled = true
+    var writes = 0
+    let result = AccessibilityGeometryUpdateScope.perform(assistiveTechnologyActive: true,
+        readEnhancedUI: { enabled }, writeEnhancedUI: { enabled = $0; writes += 1; return true },
+        updates: { #expect(enabled); return .success })
+    #expect(result == .success)
+    #expect(writes == 0)
+    #expect(enabled)
+}
+
+
+@Test(arguments: [0.02, 0.8])
+@MainActor
+func keyedStageManagerThumbnailDoesNotVerifyFullSizeDestinationWindow(scale: Double) {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "stage-hidden")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes()
+    client.windowNumbersByToken[handle.token] = 41
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let captured = service.captureWindows(displays: serviceDisplays).windows[0]
+    let destination = CGRect(x: 1100, y: 100, width: 300, height: 200)
+    let move = WindowMove(windowID: captured.snapshot.id, destinationDisplayID: 2, frame: destination)
+    #expect(service.apply(move: move, isResizable: true) == .success)
+    client.visibleWindowValues = [VisibleWindowSnapshot(processIdentifier: 100,
+        frame: CGRect(x: 1100, y: 100, width: 300 * scale, height: 200 * scale), windowNumber: 41)]
+    #expect(service.verificationStatus(for: move, isResizable: true, tolerance: 2) == .notVisible)
+    #expect(service.restore(windowID: move.windowID, isResizable: true) == .success)
+    #expect(client.attributesByToken[handle.token]!.position == captured.snapshot.frame.origin)
+}
+
+@Test
+@MainActor
+func nativeTileDecorationAtSharedBoundaryDoesNotBecomeASpanningWindow() {
+    let client = FakeAccessibilityClient()
+    let handles = [AccessibilityWindowHandle(token: "decorated-left"), AccessibilityWindowHandle(token: "decorated-right"),
+                   AccessibilityWindowHandle(token: "genuine-span")]
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = handles
+    client.attributesByToken[handles[0].token] = serviceAttributes(position: .zero, size: CGSize(width: 501, height: 800))
+    client.attributesByToken[handles[1].token] = serviceAttributes(position: CGPoint(x: 501, y: 0), size: CGSize(width: 500, height: 800))
+    client.attributesByToken[handles[2].token] = serviceAttributes(position: CGPoint(x: 800, y: 100), size: CGSize(width: 400, height: 300))
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: serviceDisplays)
+    let moves = WindowMappingEngine().makeSwapMoves(windows: batch.windows.map(\.snapshot),
+        displayA: serviceDisplays[0], displayB: serviceDisplays[1])
+    #expect(moves.count == 2)
+    #expect(moves.map(\.frame) == [CGRect(x: 1000, y: 0, width: 500, height: 800),
+                                 CGRect(x: 1500, y: 0, width: 500, height: 800)])
+    for move in moves { #expect(service.apply(move: move, isResizable: true) == .success) }
+    #expect(!client.writeEvents.contains { $0.contains("genuine-span") })
+}
+
+@Test
+@MainActor
+func nativeZoomIsRestoredWhenDestinationResizeIsAcknowledgedButIgnored() {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "zoom-resize-refused")
+    let displays = [serviceDisplays[0], DisplaySnapshot(id: 2,
+        frame: CGRect(x: 1000, y: 0, width: 1200, height: 900),
+        visibleFrame: CGRect(x: 1000, y: 0, width: 1200, height: 900))]
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes(position: .zero,
+        size: displays[0].visibleFrame.size,
+        presentationState: WindowPresentationState(isZoomed: true, canToggleZoom: true))
+    client.ignoresSizeWritesUntilZoom = true
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let id = service.captureWindows(displays: displays).windows[0].snapshot.id
+    #expect(service.apply(move: WindowMove(windowID: id, destinationDisplayID: 2,
+        frame: displays[1].visibleFrame), isResizable: true) == WindowApplyResult(succeeded: false, failure: .size))
+    #expect(client.attributesByToken[handle.token]!.presentationState.isZoomed == true)
+}
+
+
+@Test(arguments: [false, true])
+@MainActor
+func measuredSwapRecoversExactHiddenWindowAndRechecksOtherWindows(hidesOther: Bool) async {
+    let client = FakeAccessibilityClient()
+    let handles = [AccessibilityWindowHandle(token: "stage-left"), AccessibilityWindowHandle(token: "stage-right")]
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = handles
+    for (index, handle) in handles.enumerated() {
+        client.attributesByToken[handle.token] = serviceAttributes(position: CGPoint(x: CGFloat(index) * 500, y: 0),
+                                                                 size: CGSize(width: 500, height: 800))
+        client.windowNumbersByToken[handle.token] = UInt32(41 + index)
+    }
+    client.hidesOnDestinationTokens = [handles[0].token]
+    if hidesOther { client.hideAnotherOnRaise = handles[1].token }
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let coordinator = SwapCoordinator(authorization: TileAuthorizer(), displays: TileDisplays(values: serviceDisplays),
+        windowProvider: service, windowApplying: service, windowRestorer: service,
+        windowVerifier: service, windowVisibilityRecoverer: service)
+    let result = await coordinator.swapMeasured()
+    #expect(result.outcome == (hidesOther ? .partialFailure(attempted: 2, succeeded: 1, failed: 1)
+                                        : .success(attempted: 2, succeeded: 2)))
+    #expect(client.writeEvents.filter { $0.hasPrefix("raise:") } == ["raise:stage-left"])
+    #expect(client.attributesByToken[handles[0].token]!.position == CGPoint(x: 1000, y: 0))
+}
+
+@Test
+@MainActor
+func visibilityRecoveryRequiresCorrectGeometryAndIsBoundedToOneAttempt() {
+    let client = FakeAccessibilityClient()
+    let handle = AccessibilityWindowHandle(token: "bounded-recovery")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [handle]
+    client.attributesByToken[handle.token] = serviceAttributes()
+    client.windowNumbersByToken[handle.token] = 41
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let id = service.captureWindows(displays: serviceDisplays).windows[0].snapshot.id
+    let move = WindowMove(windowID: id, destinationDisplayID: 2, frame: CGRect(x: 1100, y: 100, width: 300, height: 200))
+    #expect(!service.recoverVisibility(for: move, isResizable: true).succeeded)
+    #expect(client.writeEvents.isEmpty)
+    #expect(service.apply(move: move, isResizable: true) == .success)
+    client.hiddenTokens = [handle.token]
+    client.failingRaiseActions = true
+    #expect(!service.recoverVisibility(for: move, isResizable: true).succeeded)
+    #expect(!service.recoverVisibility(for: move, isResizable: true).succeeded)
+    #expect(client.writeEvents.filter { $0.hasPrefix("raise:") }.count == 1)
 }

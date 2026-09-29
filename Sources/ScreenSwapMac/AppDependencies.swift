@@ -38,6 +38,7 @@ struct AppDependencies {
             windowApplying: windowService,
             windowRestorer: windowService,
             windowVerifier: windowService,
+            windowVisibilityRecoverer: windowService,
             selection: selectionStore,
             displaySelection: displayPairSelectionStore,
             performanceRecorder: SwapPerformanceLogger(isEnabled: {

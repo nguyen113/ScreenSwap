@@ -42,6 +42,9 @@ public enum WindowClassifier {
               !attributes.isMinimized else {
             return .excluded
         }
+        guard attributes.presentationState.isFullScreen != true else {
+            return .excluded
+        }
 
         let transientSubroles: Set<String> = [
             "AXDialog",
@@ -56,13 +59,7 @@ public enum WindowClassifier {
         guard !isAuxiliary(attributes.subrole) else {
             return .excluded
         }
-        // Native full-screen windows live in a dedicated macOS Space. Their
-        // geometry attributes can be temporarily non-settable until the
-        // window exits that Space, but the full-screen transition itself is
-        // the supported route to make them movable. Do not apply this escape
-        // hatch to ordinary windows: those remain excluded so Stage Manager
-        // and other hidden non-movable surfaces cannot be moved.
-        guard attributes.positionIsSettable || attributes.presentationState.isFullScreen == true else {
+        guard attributes.positionIsSettable else {
             return .excluded
         }
         return .eligible(isResizable: attributes.sizeIsSettable)
@@ -71,12 +68,13 @@ public enum WindowClassifier {
     public static func skipReason(for attributes: AccessibilityWindowAttributes) -> WindowSkipReason? {
         guard attributes.role == "AXWindow" else { return .nonWindow }
         guard !attributes.isMinimized else { return .minimized }
+        if attributes.presentationState.isFullScreen == true { return .nativeFullScreenSpace }
         let transientSubroles: Set<String> = [
             "AXDialog", "AXSystemDialog", "AXSheet", "AXFloatingWindow", "AXPopover"
         ]
         if transientSubroles.contains(attributes.subrole ?? "") { return .transient }
         if isAuxiliary(attributes.subrole) { return .auxiliary }
-        guard attributes.positionIsSettable || attributes.presentationState.isFullScreen == true else {
+        guard attributes.positionIsSettable else {
             return .nonMovable
         }
         return nil

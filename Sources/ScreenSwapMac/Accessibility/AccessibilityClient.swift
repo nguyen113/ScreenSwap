@@ -41,6 +41,7 @@ public protocol AccessibilityClient: AnyObject {
     /// User-facing text is intentionally a separate, best-effort operation.
     /// A missing title must never make geometry capture or swapping fail.
     func title(for window: AccessibilityWindowHandle) throws -> String?
+    func withGeometryUpdates(for window: AccessibilityWindowHandle, _ updates: () -> WindowApplyResult) -> WindowApplyResult
     func setSize(_ size: CGSize, for window: AccessibilityWindowHandle) throws
     func setPosition(_ position: CGPoint, for window: AccessibilityWindowHandle) throws
     func raise(_ window: AccessibilityWindowHandle) throws
@@ -52,6 +53,10 @@ public protocol AccessibilityClient: AnyObject {
 
 public extension AccessibilityClient {
     func title(for window: AccessibilityWindowHandle) throws -> String? { nil }
+
+    func withGeometryUpdates(for window: AccessibilityWindowHandle, _ updates: () -> WindowApplyResult) -> WindowApplyResult {
+        updates()
+    }
 
     /// Fakes and clients that cannot activate an application may preserve the
     /// existing behavior. The live adapter overrides this for native
@@ -162,6 +167,23 @@ public final class LiveAccessibilityClient: AccessibilityClient {
             throw AccessibilityClientError.attributeReadFailed
         }
         return try optionalStringAttribute(kAXTitleAttribute as CFString, from: element)
+    }
+
+    public func withGeometryUpdates(
+        for window: AccessibilityWindowHandle,
+        _ updates: () -> WindowApplyResult
+    ) -> WindowApplyResult {
+        guard let pid = processIdentifiers[window.token] else { return updates() }
+        let application = AXUIElementCreateApplication(pid)
+        let attribute = "AXEnhancedUserInterface" as CFString
+        return AccessibilityGeometryUpdateScope.perform(
+            assistiveTechnologyActive: NSWorkspace.shared.isVoiceOverEnabled || NSWorkspace.shared.isSwitchControlEnabled,
+            readEnhancedUI: { self.optionalBoolAttribute(attribute, from: application) },
+            writeEnhancedUI: { enabled in
+                AXUIElementSetAttributeValue(application, attribute, enabled ? kCFBooleanTrue : kCFBooleanFalse) == .success
+            },
+            updates: updates
+        )
     }
 
     public func setSize(_ size: CGSize, for window: AccessibilityWindowHandle) throws {
