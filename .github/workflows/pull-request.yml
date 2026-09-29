@@ -1,0 +1,40 @@
+name: Pull Request
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pull-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Build and test
+    runs-on: macos-15
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode with Swift Testing
+        shell: bash
+        run: |
+          for developer_dir in /Applications/Xcode*.app/Contents/Developer; do
+            framework="$developer_dir/Platforms/MacOSX.platform/Developer/Library/Frameworks/Testing.framework"
+            if [[ -d "$framework" ]]; then
+              echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "error: no installed Xcode includes Testing.framework" >&2
+          exit 1
+
+      - name: Build and run tests
+        run: ./build-test.sh
+
+      - name: Check pull request diff
+        run: git diff --check "${{ github.event.pull_request.base.sha }}" HEAD
