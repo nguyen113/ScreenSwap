@@ -290,6 +290,18 @@ public protocol WindowRestoring: AnyObject {
 @MainActor
 public protocol WindowVisibilityRecovering: AnyObject {
     func recoverVisibility(for move: WindowMove, isResizable: Bool) -> WindowApplyResult
+    func recoverVisibility(
+        for move: WindowMove,
+        isResizable: Bool,
+        knownStatus: WindowVerificationStatus
+    ) -> WindowApplyResult
+}
+
+public extension WindowVisibilityRecovering {
+    func recoverVisibility(for move: WindowMove, isResizable: Bool, knownStatus: WindowVerificationStatus) -> WindowApplyResult {
+        guard knownStatus == .notVisible else { return WindowApplyResult(succeeded: false, failure: .visibility) }
+        return recoverVisibility(for: move, isResizable: isResizable)
+    }
 }
 
 public enum WindowVerificationStatus: Equatable, Sendable {
@@ -308,6 +320,11 @@ public enum WindowVerificationStatus: Equatable, Sendable {
 public protocol WindowVerifying: AnyObject {
     @MainActor
     func verificationStatus(for move: WindowMove, isResizable: Bool, tolerance: CGFloat) -> WindowVerificationStatus
+}
+
+public protocol WindowBatchVerifying: WindowVerifying {
+    @MainActor
+    func verificationStatuses(for candidates: [(WindowMove, Bool)], tolerance: CGFloat) -> [WindowID: WindowVerificationStatus]
 }
 
 @MainActor

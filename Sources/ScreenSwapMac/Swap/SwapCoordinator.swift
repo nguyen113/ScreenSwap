@@ -310,17 +310,36 @@ public final class SwapCoordinator {
                 applyFailedIDs.insert(move.windowID)
             }
         }
-        if let windowVisibilityRecoverer, let windowVerifier {
+        // T4 measures only the final planned AX move command, never recovery
+        // or verification work.
+        let t4 = clock.nowNanoseconds()
+        let initialStatuses = verificationStatuses(verifiedCandidates)
+        var statusesForVerification = initialStatuses
+        if let windowVisibilityRecoverer, windowVerifier != nil {
             let hiddenCandidates = verifiedCandidates.filter {
-                windowVerifier.verificationStatus(for: $0.0, isResizable: $0.1, tolerance: 2) == .notVisible
+                initialStatuses[$0.0.windowID] == .notVisible
             }
             for (move, isResizable) in hiddenCandidates {
-                _ = windowVisibilityRecoverer.recoverVisibility(for: move, isResizable: isResizable)
+                _ = windowVisibilityRecoverer.recoverVisibility(for: move, isResizable: isResizable, knownStatus: .notVisible)
+            }
+            if !hiddenCandidates.isEmpty {
+                let postRaiseStatuses = verificationStatuses(verifiedCandidates)
+                for (move, isResizable) in hiddenCandidates where postRaiseStatuses[move.windowID] == .pending {
+                    if !windowApplying.apply(move: move, isResizable: isResizable).succeeded {
+                        applyFailedIDs.insert(move.windowID)
+                    }
+                }
+                statusesForVerification = hiddenCandidates.contains { postRaiseStatuses[$0.0.windowID] == .pending }
+                    ? [:]
+                    : postRaiseStatuses
             }
         }
-        let t4 = clock.nowNanoseconds()
 
-        let verification = await verify(verifiedCandidates)
+        let verification = await verify(
+            verifiedCandidates,
+            initialStatuses: statusesForVerification,
+            deadlineNanoseconds: t4 &+ 500_000_000
+        )
         for id in verification.notVisibleIDs {
             guard let isResizable = capabilities[id] else { continue }
             _ = windowRestorer?.restore(windowID: id, isResizable: isResizable)
@@ -417,15 +436,29 @@ public final class SwapCoordinator {
         )
     }
 
-    private func verify(_ candidates: [(WindowMove, Bool)]) async -> (unverifiedIDs: Set<WindowID>, notVisibleIDs: Set<WindowID>, didVerify: Bool, timedOut: Bool) {
+    private func verificationStatuses(_ candidates: [(WindowMove, Bool)]) -> [WindowID: WindowVerificationStatus] {
+        guard let windowVerifier else { return [:] }
+        if let batchVerifier = windowVerifier as? any WindowBatchVerifying {
+            return batchVerifier.verificationStatuses(for: candidates, tolerance: 2)
+        }
+        return Dictionary(uniqueKeysWithValues: candidates.map { ($0.0.windowID, windowVerifier.verificationStatus(for: $0.0, isResizable: $0.1, tolerance: 2)) })
+    }
+
+    private func verify(
+        _ candidates: [(WindowMove, Bool)],
+        initialStatuses: [WindowID: WindowVerificationStatus] = [:],
+        deadlineNanoseconds: UInt64? = nil
+    ) async -> (unverifiedIDs: Set<WindowID>, notVisibleIDs: Set<WindowID>, didVerify: Bool, timedOut: Bool) {
         guard !candidates.isEmpty else { return ([], [], windowVerifier != nil, false) }
-        guard let windowVerifier else { return (Set(candidates.map { $0.0.windowID }), [], false, false) }
+        guard windowVerifier != nil else { return (Set(candidates.map { $0.0.windowID }), [], false, false) }
         let allCandidates = Dictionary(uniqueKeysWithValues: candidates.map { ($0.0.windowID, $0) })
-        var latestStatuses: [WindowID: WindowVerificationStatus] = [:]
-        let deadline = clock.nowNanoseconds() &+ 500_000_000
+        var latestStatuses = initialStatuses
+        let deadline = deadlineNanoseconds ?? (clock.nowNanoseconds() &+ 500_000_000)
         while true {
-            let unresolved = Set(allCandidates.compactMap { id, candidate in
-                let status = windowVerifier.verificationStatus(for: candidate.0, isResizable: candidate.1, tolerance: 2)
+            let statuses = latestStatuses.isEmpty ? verificationStatuses(candidates) : latestStatuses
+            latestStatuses = [:]
+            let unresolved = Set(allCandidates.compactMap { id, _ in
+                let status = statuses[id] ?? .unavailable
                 latestStatuses[id] = status
                 return status == .verified ? nil : id
             }
@@ -436,6 +469,7 @@ public final class SwapCoordinator {
                     .intersection(unresolved)
                 return (unresolved, notVisible, true, true)
             }
+            latestStatuses = [:]
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
     }

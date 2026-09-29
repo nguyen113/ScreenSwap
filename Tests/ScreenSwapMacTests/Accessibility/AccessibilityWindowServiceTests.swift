@@ -10,6 +10,8 @@ private final class FakeAccessibilityClient: AccessibilityClient {
     var applicationsCallCount = 0
     var visibleWindowValues: [VisibleWindowSnapshot]?
     var visibleWindowsCallCount = 0
+    var frameReadCount = 0
+    var attributesReadCount = 0
     var windowNumbersByToken: [String: UInt32] = [:]
     var hiddenTokens: Set<String> = []
     var failingVisibleWindowEnumeration = false
@@ -81,6 +83,7 @@ private final class FakeAccessibilityClient: AccessibilityClient {
     }
 
     func attributes(for window: AccessibilityWindowHandle) throws -> AccessibilityWindowAttributes {
+        attributesReadCount += 1
         if failingAttributeReads.contains(window.token) {
             throw AccessibilityClientError.attributeReadFailed
         }
@@ -88,6 +91,14 @@ private final class FakeAccessibilityClient: AccessibilityClient {
             throw AccessibilityClientError.attributeReadFailed
         }
         return attributes
+    }
+
+    func frame(for window: AccessibilityWindowHandle) throws -> CGRect {
+        frameReadCount += 1
+        guard let value = attributesByToken[window.token] else {
+            throw AccessibilityClientError.attributeReadFailed
+        }
+        return CGRect(origin: value.position, size: value.size)
     }
 
     func title(for window: AccessibilityWindowHandle) throws -> String? {
@@ -1642,6 +1653,35 @@ func overlappingSameAppWindowsVerifyOnlyTheirOwnQuartzIdentity(hideSecond: Bool)
     #expect(service.verificationStatus(for: moves[0], isResizable: true, tolerance: 2) == .verified)
     #expect(service.verificationStatus(for: moves[1], isResizable: true, tolerance: 2) ==
             (hideSecond ? .notVisible : .verified))
+}
+
+@Test
+@MainActor
+func batchVerificationUsesOneQuartzSnapshotForEightWindows() {
+    let client = FakeAccessibilityClient()
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    let handles = (0..<8).map { AccessibilityWindowHandle(token: "batch-\($0)") }
+    client.handlesByPID[100] = handles
+    for (index, handle) in handles.enumerated() {
+        let frame = CGRect(x: CGFloat(index * 100), y: 20, width: 80, height: 80)
+        client.attributesByToken[handle.token] = serviceAttributes(position: frame.origin, size: frame.size)
+        client.windowNumbersByToken[handle.token] = UInt32(41 + index)
+    }
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: serviceDisplays)
+    client.visibleWindowsCallCount = 0
+    client.frameReadCount = 0
+    client.attributesReadCount = 0
+    let candidates = batch.windows.map { captured in
+        (WindowMove(windowID: captured.snapshot.id, destinationDisplayID: captured.snapshot.sourceDisplayID, frame: captured.snapshot.frame), captured.isResizable)
+    }
+
+    let statuses = service.verificationStatuses(for: candidates, tolerance: 2)
+
+    #expect(statuses.values.allSatisfy { $0 == .verified })
+    #expect(client.visibleWindowsCallCount == 1)
+    #expect(client.frameReadCount == 8)
+    #expect(client.attributesReadCount == 0)
 }
 
 @Test

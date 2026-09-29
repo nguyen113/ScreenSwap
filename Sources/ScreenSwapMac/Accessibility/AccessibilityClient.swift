@@ -38,6 +38,8 @@ public protocol AccessibilityClient: AnyObject {
     func visibleWindows() throws -> [VisibleWindowSnapshot]
     func windows(for application: AccessibilityApplication) throws -> [AccessibilityWindowHandle]
     func attributes(for window: AccessibilityWindowHandle) throws -> AccessibilityWindowAttributes
+    /// Hot-path verification reads only AXPosition and AXSize.
+    func frame(for window: AccessibilityWindowHandle) throws -> CGRect
     /// User-facing text is intentionally a separate, best-effort operation.
     /// A missing title must never make geometry capture or swapping fail.
     func title(for window: AccessibilityWindowHandle) throws -> String?
@@ -52,6 +54,10 @@ public protocol AccessibilityClient: AnyObject {
 }
 
 public extension AccessibilityClient {
+    func frame(for window: AccessibilityWindowHandle) throws -> CGRect {
+        let attributes = try attributes(for: window)
+        return CGRect(origin: attributes.position, size: attributes.size)
+    }
     func title(for window: AccessibilityWindowHandle) throws -> String? { nil }
 
     func withGeometryUpdates(for window: AccessibilityWindowHandle, _ updates: () -> WindowApplyResult) -> WindowApplyResult {
@@ -159,6 +165,16 @@ public final class LiveAccessibilityClient: AccessibilityClient {
             positionIsSettable: positionSettable,
             sizeIsSettable: sizeSettable,
             presentationState: presentationState
+        )
+    }
+
+    public func frame(for window: AccessibilityWindowHandle) throws -> CGRect {
+        guard let element = elements[window.token] else {
+            throw AccessibilityClientError.attributeReadFailed
+        }
+        return CGRect(
+            origin: try pointAttribute(kAXPositionAttribute as CFString, from: element),
+            size: try sizeAttribute(kAXSizeAttribute as CFString, from: element)
         )
     }
 

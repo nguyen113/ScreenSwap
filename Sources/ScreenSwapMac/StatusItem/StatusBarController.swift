@@ -244,8 +244,11 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
     public func present(from button: NSStatusBarButton?) {
         guard let button else { return }
         rebuildMenu()
+        // Anchor the first row directly below the status item. Leaving the
+        // positioning item nil lets AppKit choose a row and can move the menu
+        // upward beneath the menu bar, obscuring the first control.
         menu.popUp(
-            positioning: nil,
+            positioning: menu.items.first,
             at: CGPoint(x: button.bounds.midX, y: button.bounds.minY),
             in: button
         )

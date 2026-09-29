@@ -150,6 +150,34 @@ private final class FakeRestorer: WindowRestoring {
 }
 
 @MainActor
+private final class CountingBatchVerifier: WindowBatchVerifying {
+    var rounds: [[WindowID: WindowVerificationStatus]]
+    var calls = 0
+    var candidatesPerRound: [Int] = []
+
+    init(rounds: [[WindowID: WindowVerificationStatus]]) { self.rounds = rounds }
+
+    func verificationStatus(for move: WindowMove, isResizable: Bool, tolerance: CGFloat) -> WindowVerificationStatus { .unavailable }
+
+    func verificationStatuses(for candidates: [(WindowMove, Bool)], tolerance: CGFloat) -> [WindowID: WindowVerificationStatus] {
+        candidatesPerRound.append(candidates.count)
+        defer { calls += 1 }
+        return rounds[min(calls, rounds.count - 1)]
+    }
+}
+
+@MainActor
+private final class CountingRecoverer: WindowVisibilityRecovering {
+    var legacyCalls = 0
+    var knownStatusCalls = 0
+    func recoverVisibility(for move: WindowMove, isResizable: Bool) -> WindowApplyResult { legacyCalls += 1; return .success }
+    func recoverVisibility(for move: WindowMove, isResizable: Bool, knownStatus: WindowVerificationStatus) -> WindowApplyResult {
+        knownStatusCalls += 1
+        return .success
+    }
+}
+
+@MainActor
 private final class FakePlanner: SwapPlanning {
     let log: EventLog
     let moves: [WindowMove]
@@ -167,6 +195,50 @@ private final class FakePlanner: SwapPlanning {
         onPlan?()
         return moves
     }
+}
+
+@Test
+@MainActor
+func measuredSwapRechecksWholeBatchWithOneSnapshotPerPoll() async {
+    let windows = (0..<4).map { captured("poll-\($0)") }
+    let moves = windows.map { WindowMove(windowID: $0.snapshot.id, destinationDisplayID: 2, frame: $0.snapshot.frame) }
+    let first = Dictionary(uniqueKeysWithValues: windows.enumerated().map { index, window in
+        (window.snapshot.id, index == 3 ? WindowVerificationStatus.pending : .verified)
+    })
+    let verifier = CountingBatchVerifier(rounds: [first, first, Dictionary(uniqueKeysWithValues: windows.map { ($0.snapshot.id, .verified) })])
+    let provider = FakeWindows(batch: WindowCaptureBatch(windows: windows))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true), displays: FakeDisplays(displays(count: 2)),
+        windowProvider: provider, windowApplying: provider,
+        planner: FakePlanner(log: EventLog(), moves: moves), windowVerifier: verifier
+    )
+
+    #expect((await coordinator.swapMeasured()).outcome == .success(attempted: 4, succeeded: 4))
+    #expect(verifier.calls == 3)
+    #expect(verifier.candidatesPerRound == [4, 4, 4])
+}
+
+@Test
+@MainActor
+func measuredSwapReappliesOnceWhenRaiseChangesGeometry() async {
+    let window = captured("raised-window")
+    let move = WindowMove(windowID: window.snapshot.id, destinationDisplayID: 2, frame: window.snapshot.frame)
+    let verifier = CountingBatchVerifier(rounds: [
+        [window.snapshot.id: .notVisible], [window.snapshot.id: .pending], [window.snapshot.id: .verified]
+    ])
+    let provider = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let recoverer = CountingRecoverer()
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true), displays: FakeDisplays(displays(count: 2)),
+        windowProvider: provider, windowApplying: provider,
+        planner: FakePlanner(log: EventLog(), moves: [move]), windowVerifier: verifier,
+        windowVisibilityRecoverer: recoverer
+    )
+
+    #expect((await coordinator.swapMeasured()).outcome == .success(attempted: 1, succeeded: 1))
+    #expect(recoverer.knownStatusCalls == 1)
+    #expect(recoverer.legacyCalls == 0)
+    #expect(provider.applied.count == 2)
 }
 
 private func displays(count: Int) -> [DisplaySnapshot] {

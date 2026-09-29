@@ -10,7 +10,7 @@ private struct AccessibilityWindowCandidate {
 }
 
 @MainActor
-public final class AccessibilityWindowService: DisplayPairWindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowVisibilityRecovering, WindowInventoryProviding, DisplayCandidateCounting {
+public final class AccessibilityWindowService: DisplayPairWindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowBatchVerifying, WindowVisibilityRecovering, WindowInventoryProviding, DisplayCandidateCounting {
     private static let diagnosticLogger = Logger(subsystem: "com.screenswap.app", category: "diagnostics")
     private let client: any AccessibilityClient
     /// Inventory discovery owns a separate client cache so opening the menu
@@ -932,6 +932,19 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
         return .success
     }
 
+    public func recoverVisibility(for move: WindowMove, isResizable: Bool, knownStatus: WindowVerificationStatus) -> WindowApplyResult {
+        guard knownStatus == .notVisible,
+              let handle = lookup[move.windowID],
+              presentationModes[move.windowID] == .ordinary || presentationModes[move.windowID] == .windowedMaximized,
+              runtimeKeysByWindowID[move.windowID] != nil,
+              !visibilityRecoveryIDs.contains(move.windowID) else {
+            return WindowApplyResult(succeeded: false, failure: .visibility)
+        }
+        visibilityRecoveryIDs.insert(move.windowID)
+        do { try client.raise(handle) } catch { return WindowApplyResult(succeeded: false, failure: .visibility) }
+        return .success
+    }
+
     public func verificationStatus(
         for move: WindowMove,
         isResizable: Bool,
@@ -983,6 +996,45 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
             "[ScreenSwapVerification] ordinal=\(diagnosticWindowOrdinals[move.windowID] ?? 0) identity_match=\(identityMatches) geometry_match=\(geometryMatches) visible=\(isVisible) result=\(result) actual=\(format(actual)) expected=\(format(expected)) quartz_frame=\(visibleWindow.map { format($0.frame) } ?? "none")"
         )
         return result
+    }
+
+    public func verificationStatuses(
+        for candidates: [(WindowMove, Bool)],
+        tolerance: CGFloat
+    ) -> [WindowID: WindowVerificationStatus] {
+        guard let visibleWindows = try? client.visibleWindows() else {
+            return Dictionary(uniqueKeysWithValues: candidates.map { ($0.0.windowID, .unavailable) })
+        }
+        let keyed = Dictionary(uniqueKeysWithValues: visibleWindows.compactMap { window in
+            window.windowNumber.map { (RuntimeWindowKey(processIdentifier: window.processIdentifier, quartzWindowNumber: $0), window) }
+        })
+        var remaining = visibleWindows
+        var statuses: [WindowID: WindowVerificationStatus] = [:]
+        for (move, isResizable) in candidates {
+            guard let handle = lookup[move.windowID], let actual = try? client.frame(for: handle) else {
+                statuses[move.windowID] = .unavailable
+                continue
+            }
+            let expected = resolvedDestinationFrame(for: move, isResizable: isResizable)
+            let geometryMatches = abs(actual.minX - expected.minX) <= tolerance &&
+                abs(actual.minY - expected.minY) <= tolerance &&
+                (!isResizable || (abs(actual.width - expected.width) <= tolerance && abs(actual.height - expected.height) <= tolerance))
+            let visible: VisibleWindowSnapshot?
+            if let key = runtimeKeysByWindowID[move.windowID] {
+                visible = keyed[key]
+            } else if let index = VisibleWindowMatcher.matchIndex(processIdentifier: move.windowID.processIdentifier, frame: actual, candidates: remaining) {
+                visible = remaining.remove(at: index)
+            } else {
+                visible = nil
+            }
+            let fullSize = visible.map { abs($0.frame.minX - actual.minX) <= 24 && abs($0.frame.minY - actual.minY) <= 24 && abs($0.frame.width - actual.width) <= 48 && abs($0.frame.height - actual.height) <= 48 } ?? false
+            let result: WindowVerificationStatus = geometryMatches && fullSize ? .verified : (geometryMatches ? .notVisible : .pending)
+            statuses[move.windowID] = result
+            recordDiagnostic(
+                "[ScreenSwapVerification] ordinal=\(diagnosticWindowOrdinals[move.windowID] ?? 0) identity_match=\(visible != nil) geometry_match=\(geometryMatches) visible=\(fullSize) result=\(result) actual=\(format(actual)) expected=\(format(expected)) quartz_frame=\(visible.map { format($0.frame) } ?? "none")"
+            )
+        }
+        return statuses
     }
 
     private func recordDiagnostic(_ message: @autoclosure () -> String) {
