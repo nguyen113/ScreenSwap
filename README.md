@@ -136,8 +136,8 @@ untouched in v0.1.
 ## Build from source
 
 ```bash
-git clone https://github.com/nguyen113/ScreenSwap-Mac.git
-cd ScreenSwap-Mac
+git clone https://github.com/nguyen113/ScreenSwap.git
+cd ScreenSwap
 ./build-test.sh
 ```
 
@@ -163,8 +163,8 @@ application bundle is not yet provided for every release.
 
 ## Report bugs
 
-Use the [bug report template](https://github.com/nguyen113/ScreenSwap-Mac/issues/new?template=bug_report.yml)
-for unexpected behavior and the [feature request template](https://github.com/nguyen113/ScreenSwap-Mac/issues/new?template=feature_request.yml)
+Use the [bug report template](https://github.com/nguyen113/ScreenSwap/issues/new?template=bug_report.yml)
+for unexpected behavior and the [feature request template](https://github.com/nguyen113/ScreenSwap/issues/new?template=feature_request.yml)
 for ideas. Include the app version, macOS version, display count, selected
 displays, and reproduction steps—but never window titles, document contents,
 credentials, or other sensitive desktop information.
@@ -214,4 +214,4 @@ See [LICENSE](LICENSE) for details.
 
 - [Core public API](docs/CORE_PUBLIC_API.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [GitHub project](https://github.com/nguyen113/ScreenSwap-Mac)
+- [GitHub project](https://github.com/nguyen113/ScreenSwap)
