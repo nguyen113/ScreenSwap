@@ -55,6 +55,19 @@ public enum StatusItemFeedbackCatalog {
     }
 }
 
+enum StatusItemMenuInventoryRefreshPolicy {
+    static func shouldMarkStale(after outcome: SwapOutcome) -> Bool {
+        switch outcome {
+        case .success:
+            return true
+        case let .partialFailure(_, succeeded, _):
+            return succeeded > 0
+        default:
+            return false
+        }
+    }
+}
+
 public enum StatusItemMouseButton: Equatable, Sendable {
     case left
     case right
@@ -97,6 +110,16 @@ public enum ScreenSwapCommandURL {
 @MainActor
 public protocol StatusItemMenuPresenting: AnyObject {
     func present(from button: NSStatusBarButton?)
+    func refreshInventory()
+    func markInventoryStale()
+    func applySuccessfulMoves(_ moves: [SuccessfulWindowMove])
+}
+
+public extension StatusItemMenuPresenting {
+    /// Presenters without a window inventory can keep this as a no-op.
+    func refreshInventory() {}
+    func markInventoryStale() {}
+    func applySuccessfulMoves(_ moves: [SuccessfulWindowMove]) {}
 }
 
 @MainActor
@@ -125,6 +148,18 @@ public final class StatusItemClickRouter {
 
     public func presentMenu(from button: NSStatusBarButton?) {
         menuPresenter.present(from: button)
+    }
+
+    public func refreshMenuInventory() {
+        menuPresenter.refreshInventory()
+    }
+
+    public func markMenuInventoryStale() {
+        menuPresenter.markInventoryStale()
+    }
+
+    public func applySuccessfulMoves(_ moves: [SuccessfulWindowMove]) {
+        menuPresenter.applySuccessfulMoves(moves)
     }
 }
 
@@ -219,6 +254,11 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
     private let selection: WindowSelectionStore?
     private let displaySelection: DisplayPairSelectionStore?
     private let shortcutRegistration: ((HotKeyShortcut) -> Bool)?
+    /// Inventory collection crosses process boundaries through Accessibility.
+    /// Keep that work out of menu presentation and checkbox actions so the
+    /// status menu stays responsive even when another app responds slowly.
+    private var cachedInventory: WindowInventory?
+    public private(set) var inventoryIsStale = false
 
     public init(
         terminator: any ScreenSwapTerminating = LiveScreenSwapTerminator(),
@@ -238,7 +278,7 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         self.shortcutRegistration = shortcutRegistration
         menu = NSMenu()
         super.init()
-        rebuildMenu()
+        refreshInventory()
     }
 
     public func present(from button: NSStatusBarButton?) {
@@ -254,15 +294,74 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         )
     }
 
-    /// Rebuilding is deliberately a read-only operation. It uses fresh menu
-    /// data every time so window movement, closure, and display reassignment
-    /// cannot leave a stale selection row onscreen.
+    /// Collects a new inventory for a future menu presentation. This is kept
+    /// explicit because it can perform slow Accessibility reads.
+    public func refreshInventory() {
+        cachedInventory = inventoryProvider?.currentInventory()
+        inventoryIsStale = false
+        rebuildMenu()
+    }
+
+    /// Records that a swap changed the visible desktop. The next menu stays
+    /// immediate and offers an explicit refresh instead of doing AX discovery
+    /// on the swap completion path.
+    public func markInventoryStale() {
+        guard inventoryProvider != nil else { return }
+        inventoryIsStale = true
+    }
+
+    /// Patches known transaction results directly into the current snapshot.
+    /// This is pure in-memory work and never calls the inventory provider.
+    public func applySuccessfulMoves(_ moves: [SuccessfulWindowMove]) {
+        guard !moves.isEmpty, let cachedInventory else { return }
+        let destinations = moves.reduce(into: [RuntimeWindowKey: UInt32]()) { result, move in
+            result[move.runtimeKey] = move.destinationDisplayID
+        }
+        let updatedWindows = cachedInventory.windows.map { window in
+            guard let key = window.key, let destination = destinations[key] else { return window }
+            return InventoryWindow(
+                key: key,
+                displayID: destination,
+                label: window.label,
+                isSelectable: window.isSelectable,
+                isAutomaticallyIncluded: window.isAutomaticallyIncluded,
+                isNativeFullScreenUnsupported: window.isNativeFullScreenUnsupported,
+                isSpanning: window.isSpanning
+            )
+        }
+        self.cachedInventory = WindowInventory(
+            displays: cachedInventory.displays,
+            windows: updatedWindows,
+            isAuthorized: cachedInventory.isAuthorized,
+            selectedDisplayIDs: cachedInventory.selectedDisplayIDs,
+            primaryDisplayID: cachedInventory.primaryDisplayID
+        )
+        rebuildMenu()
+    }
+
+    /// Rebuilding only renders the cached snapshot. It must remain free of
+    /// inventory discovery: this is called for right-click presentation and
+    /// every selection change.
     public func rebuildMenu() {
         menu.removeAllItems()
-        if let inventoryProvider {
-            appendInventory(inventoryProvider.currentInventory())
+        if let cachedInventory {
+            appendInventory(inventoryForCurrentDisplaySelection(cachedInventory))
+        }
+        if inventoryProvider != nil {
+            appendRefreshItem(separatorNeeded: !menu.items.isEmpty)
         }
         appendUtilityItems(separatorNeeded: !menu.items.isEmpty)
+    }
+
+    private func inventoryForCurrentDisplaySelection(_ inventory: WindowInventory) -> WindowInventory {
+        guard let displaySelection else { return inventory }
+        return WindowInventory(
+            displays: inventory.displays,
+            windows: inventory.windows,
+            isAuthorized: inventory.isAuthorized,
+            selectedDisplayIDs: Set(displaySelection.frozenPair()),
+            primaryDisplayID: inventory.primaryDisplayID
+        )
     }
 
     private func appendInventory(_ inventory: WindowInventory) {
@@ -379,6 +478,16 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         exitItem.target = self; menu.addItem(exitItem)
     }
 
+    private func appendRefreshItem(separatorNeeded: Bool) {
+        if separatorNeeded { menu.addItem(.separator()) }
+        let title = inventoryIsStale
+            ? "Refresh Windows — window list may have changed"
+            : "Refresh Windows"
+        let refresh = NSMenuItem(title: title, action: #selector(refreshSelected(_:)), keyEquivalent: "r")
+        refresh.target = self
+        menu.addItem(refresh)
+    }
+
     @objc private func toggleGroup(_ sender: NSMenuItem) {
         guard let payload = sender.representedObject as? SelectionMenuPayload,
               !payload.keys.isEmpty else { return }
@@ -404,6 +513,10 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
               let key = payload.keys.first else { return }
         selection?.setSelected(!(selection?.isSelected(key) ?? false), for: key)
         rebuildMenu()
+    }
+
+    @objc private func refreshSelected(_ sender: Any?) {
+        refreshInventory()
     }
 
     private func menuState(_ state: WindowSelectionState) -> NSControl.StateValue {
@@ -467,6 +580,9 @@ public final class StatusItemActionHandler {
     public private(set) var isEnabled = true
     public private(set) var feedback = StatusItemFeedback(title: "ScreenSwap", message: "")
     public private(set) var diagnostics = SwapDiagnostics.empty
+    public var latestSuccessfulWindowMoves: [SuccessfulWindowMove] {
+        coordinator.latestSuccessfulWindowMoves
+    }
 
     public init(coordinator: SwapCoordinator, authorization: any AccessibilityAuthorizing) {
         self.coordinator = coordinator
@@ -727,6 +843,13 @@ public final class StatusBarController: NSObject {
             statusItem.button?.toolTip = actionHandler.tooltip
             statusItem.button?.isEnabled = actionHandler.isEnabled
             iconAnimation.endedSwap()
+            if StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: outcome) {
+                // Do not perform a synchronous AX inventory crawl after a
+                // swap. It would block the main actor just as the UI becomes
+                // interactive again.
+                clickRouter.applySuccessfulMoves(actionHandler.latestSuccessfulWindowMoves)
+                clickRouter.markMenuInventoryStale()
+            }
             if case .unsupportedDisplayCount = outcome {
                 clickRouter.presentMenu(from: statusItem.button)
             }

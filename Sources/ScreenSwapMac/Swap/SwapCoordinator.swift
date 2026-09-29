@@ -20,6 +20,9 @@ public final class SwapCoordinator {
     /// Transaction-local AX handles are deliberately not retained. This is the
     /// latest immutable pre-swap geometry snapshot for a future undo action.
     public private(set) var latestPreSwapSnapshots: [WindowSnapshot] = []
+    /// Exact runtime identities that completed the latest transaction. This
+    /// lets the status menu patch its cached grouping without AX rediscovery.
+    public private(set) var latestSuccessfulWindowMoves: [SuccessfulWindowMove] = []
 
     public init(
         authorization: any AccessibilityAuthorizing,
@@ -56,6 +59,7 @@ public final class SwapCoordinator {
         }
         isRunning = true
         defer { isRunning = false }
+        latestSuccessfulWindowMoves = []
 
         guard authorization.isTrusted else {
             lastDiagnostics = .empty
@@ -133,13 +137,25 @@ public final class SwapCoordinator {
 
         var attempted = 0
         var succeeded = 0
+        var failedIDs = Set<WindowID>()
         for move in orderedMoves {
             attempted += 1
-            guard let isResizable = capabilities[move.windowID] else { continue }
+            guard let isResizable = capabilities[move.windowID] else {
+                failedIDs.insert(move.windowID)
+                continue
+            }
             if windowApplying.apply(move: move, isResizable: isResizable).succeeded {
                 succeeded += 1
+            } else {
+                failedIDs.insert(move.windowID)
             }
         }
+
+        latestSuccessfulWindowMoves = successfulWindowMoves(
+            batch: batch,
+            moves: moves,
+            failedIDs: failedIDs
+        )
 
         let failed = attempted - succeeded
         lastDiagnostics = makeDiagnostics(
@@ -184,6 +200,7 @@ public final class SwapCoordinator {
         }
         isRunning = true
         defer { isRunning = false }
+        latestSuccessfulWindowMoves = []
 
         guard authorization.isTrusted else {
             lastDiagnostics = .empty
@@ -346,6 +363,11 @@ public final class SwapCoordinator {
         }
         let t5 = clock.nowNanoseconds()
         let failedIDs = applyFailedIDs.union(verification.unverifiedIDs)
+        latestSuccessfulWindowMoves = successfulWindowMoves(
+            batch: batch,
+            moves: moves,
+            failedIDs: failedIDs
+        )
         let succeeded = moves.count - failedIDs.count
         let failed = failedIDs.count
         lastDiagnostics = makeDiagnostics(
@@ -369,6 +391,26 @@ public final class SwapCoordinator {
             attempted: moves.count, succeeded: succeeded, failed: failed,
             verified: !moves.isEmpty && failed == 0 && verification.didVerify, timedOut: verification.timedOut
         )
+    }
+
+    private func successfulWindowMoves(
+        batch: WindowCaptureBatch,
+        moves: [WindowMove],
+        failedIDs: Set<WindowID>
+    ) -> [SuccessfulWindowMove] {
+        let runtimeKeysByWindowID = batch.windows.reduce(into: [WindowID: RuntimeWindowKey]()) { keys, window in
+            if let runtimeKey = window.runtimeKey {
+                keys[window.snapshot.id] = runtimeKey
+            }
+        }
+        return moves.compactMap { move in
+            guard !failedIDs.contains(move.windowID),
+                  let runtimeKey = runtimeKeysByWindowID[move.windowID] else { return nil }
+            return SuccessfulWindowMove(
+                runtimeKey: runtimeKey,
+                destinationDisplayID: move.destinationDisplayID
+            )
+        }
     }
 
     /// Selects exactly two displays once per transaction. The returned values

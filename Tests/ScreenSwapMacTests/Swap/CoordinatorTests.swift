@@ -376,8 +376,10 @@ func coordinatorExcludesNativeFullScreenMovesBeforePlanning() {
 @Test
 @MainActor
 func coordinatorContinuesAfterAnApplyFailureAndClearsRunningGuard() {
-    let first = captured("first")
-    let second = captured("second")
+    let firstKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
+    let secondKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 2)
+    let first = captured("first", runtimeKey: firstKey)
+    let second = captured("second", runtimeKey: secondKey)
     let moves = [
         WindowMove(windowID: first.snapshot.id, destinationDisplayID: 2, frame: .zero),
         WindowMove(windowID: second.snapshot.id, destinationDisplayID: 2, frame: .zero)
@@ -395,6 +397,9 @@ func coordinatorContinuesAfterAnApplyFailureAndClearsRunningGuard() {
     )
     #expect(coordinator.swap() == .partialFailure(attempted: 2, succeeded: 1, failed: 1))
     #expect(windows.applied.count == 2)
+    #expect(coordinator.latestSuccessfulWindowMoves == [
+        SuccessfulWindowMove(runtimeKey: secondKey, destinationDisplayID: 2)
+    ])
     #expect(coordinator.swap() == .success(attempted: 2, succeeded: 2))
 }
 
@@ -425,7 +430,8 @@ func coordinatorReturnsAlreadyRunningWhenGuardIsEntered() {
 @Test
 @MainActor
 func measuredSwapRestoresOnlyWindowsThatRemainNotVisibleAfterVerification() async {
-    let window = captured("hidden-after-write", resizable: false)
+    let runtimeKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 99)
+    let window = captured("hidden-after-write", resizable: false, runtimeKey: runtimeKey)
     let move = WindowMove(
         windowID: window.snapshot.id,
         destinationDisplayID: 2,
@@ -447,6 +453,7 @@ func measuredSwapRestoresOnlyWindowsThatRemainNotVisibleAfterVerification() asyn
 
     let result = await coordinator.swapMeasured(commandReceivedNanoseconds: 0)
     #expect(result.outcome == .partialFailure(attempted: 1, succeeded: 0, failed: 1))
+    #expect(coordinator.latestSuccessfulWindowMoves.isEmpty)
     #expect(restorer.restored.map { $0.0 } == [window.snapshot.id])
     #expect(restorer.restored.map { $0.1 } == [false])
 }

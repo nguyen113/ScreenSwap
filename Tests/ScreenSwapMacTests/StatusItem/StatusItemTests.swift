@@ -88,6 +88,14 @@ func statusFeedbackCatalogProvidesImmediateSafePayloadForEveryOutcome() {
 }
 
 @Test
+func successfulAndPartiallySuccessfulSwapsMarkMenuInventoryStale() {
+    #expect(StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: .success(attempted: 2, succeeded: 2)))
+    #expect(StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: .partialFailure(attempted: 2, succeeded: 1, failed: 1)))
+    #expect(!StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: .partialFailure(attempted: 2, succeeded: 0, failed: 2)))
+    #expect(!StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: .noMoves))
+}
+
+@Test
 @MainActor
 func statusPopoverFeedbackUsesShortAutoDismissInterval() {
     #expect(StatusPopoverFeedbackPresenter.autoDismissInterval == 1.5)
@@ -115,6 +123,11 @@ func statusItemRoutesRightClickToMenuAndLeftClickToExactlyOneSwapAction() {
     #expect(leftActionCount == 0)
     #expect(menuPresenter.presentCount == 1)
     #expect(auth.requestCount == 0)
+
+    router.refreshMenuInventory()
+    #expect(menuPresenter.refreshCount == 1)
+    router.markMenuInventoryStale()
+    #expect(menuPresenter.staleCount == 1)
 
     #expect(router.route(mouseButton: .left, button: nil) {
         leftActionCount += 1
@@ -289,6 +302,124 @@ func statusMenuShowsPermissionExplanationWithoutSelectionControls() {
     #expect(menuController.menu.items.map(\.title).contains("Exit ScreenSwap"))
 }
 
+@Test
+@MainActor
+func statusMenuRendersCachedInventoryWithoutRefreshingOnRebuildOrSelectionChange() {
+    let key = RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 1)
+    let inventory = WindowInventory(
+        displays: [InventoryDisplay(
+            snapshot: DisplaySnapshot(
+                id: 1,
+                frame: CGRect(x: 0, y: 0, width: 100, height: 100),
+                visibleFrame: CGRect(x: 0, y: 0, width: 100, height: 100)
+            ),
+            ordinal: 1,
+            name: nil
+        )],
+        windows: [InventoryWindow(key: key, displayID: 1, label: "Finder", isSelectable: true, isSpanning: false)]
+    )
+    let provider = StatusFakeInventory(inventory)
+    let selection = WindowSelectionStore()
+    let menuController = StatusItemMenuController(inventoryProvider: provider, selection: selection)
+
+    #expect(provider.currentInventoryCallCount == 1)
+    menuController.rebuildMenu()
+    #expect(provider.currentInventoryCallCount == 1)
+
+    let item = menuController.menu.items.first { $0.title == "        Finder" }!
+    menuController.perform(NSSelectorFromString("toggleWindow:"), with: item)
+    #expect(provider.currentInventoryCallCount == 1)
+    #expect(!selection.isSelected(key))
+}
+
+@Test
+@MainActor
+func statusMenuRefreshActionIsTheOnlyPathThatCollectsAnotherInventorySnapshot() {
+    let initial = WindowInventory(displays: [], windows: [])
+    let refreshed = WindowInventory(displays: [], windows: [
+        InventoryWindow(
+            key: RuntimeWindowKey(processIdentifier: 2, quartzWindowNumber: 2),
+            displayID: nil,
+            label: "Updated window",
+            isSelectable: false,
+            isSpanning: true
+        )
+    ])
+    let provider = StatusFakeInventory(initial)
+    let menuController = StatusItemMenuController(inventoryProvider: provider)
+    provider.inventory = refreshed
+
+    #expect(provider.currentInventoryCallCount == 1)
+    menuController.perform(NSSelectorFromString("refreshSelected:"), with: nil)
+    #expect(provider.currentInventoryCallCount == 2)
+    #expect(menuController.menu.items.map(\.title).contains("⚠ Updated window — spanning, unavailable"))
+}
+
+@Test
+@MainActor
+func statusMenuMarksCachedInventoryStaleWithoutPerformingAnotherInventoryRead() {
+    let provider = StatusFakeInventory(WindowInventory(displays: [], windows: []))
+    let menuController = StatusItemMenuController(inventoryProvider: provider)
+
+    #expect(provider.currentInventoryCallCount == 1)
+    menuController.markInventoryStale()
+    #expect(menuController.inventoryIsStale)
+    #expect(provider.currentInventoryCallCount == 1)
+
+    menuController.rebuildMenu()
+    #expect(provider.currentInventoryCallCount == 1)
+    #expect(menuController.menu.items.map(\.title).contains("Refresh Windows — window list may have changed"))
+
+    menuController.perform(NSSelectorFromString("refreshSelected:"), with: nil)
+    #expect(!menuController.inventoryIsStale)
+    #expect(provider.currentInventoryCallCount == 2)
+}
+
+@Test
+@MainActor
+func statusMenuPatchesOnlySuccessfulMovesIntoCachedDisplayGroups() {
+    let finder = RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 41)
+    let safari = RuntimeWindowKey(processIdentifier: 2, quartzWindowNumber: 52)
+    let terminal = RuntimeWindowKey(processIdentifier: 3, quartzWindowNumber: 63)
+    let displays = [1, 2].enumerated().map { offset, id in
+        InventoryDisplay(
+            snapshot: DisplaySnapshot(
+                id: UInt32(id),
+                frame: CGRect(x: CGFloat(offset * 100), y: 0, width: 100, height: 100),
+                visibleFrame: CGRect(x: CGFloat(offset * 100), y: 0, width: 100, height: 100)
+            ),
+            ordinal: offset + 1,
+            name: nil
+        )
+    }
+    let provider = StatusFakeInventory(WindowInventory(
+        displays: displays,
+        windows: [
+            InventoryWindow(key: finder, displayID: 1, label: "Finder", isSelectable: true, isSpanning: false),
+            InventoryWindow(key: safari, displayID: 1, label: "Safari", isSelectable: true, isSpanning: false),
+            InventoryWindow(key: terminal, displayID: 2, label: "Terminal", isSelectable: true, isSpanning: false)
+        ]
+    ))
+    let menuController = StatusItemMenuController(inventoryProvider: provider)
+
+    // Finder and Terminal completed the swap. Safari's failed move must stay
+    // in its cached source group without requesting fresh AX inventory.
+    menuController.applySuccessfulMoves([
+        SuccessfulWindowMove(runtimeKey: finder, destinationDisplayID: 2),
+        SuccessfulWindowMove(runtimeKey: terminal, destinationDisplayID: 1)
+    ])
+
+    #expect(provider.currentInventoryCallCount == 1)
+    let titles = menuController.menu.items.map(\.title)
+    let firstDisplay = titles.firstIndex(of: "Display 1")!
+    let secondDisplay = titles.firstIndex(of: "Display 2")!
+    #expect(titles.firstIndex(of: "        Terminal")! > firstDisplay)
+    #expect(titles.firstIndex(of: "        Terminal")! < secondDisplay)
+    #expect(titles.firstIndex(of: "        Safari")! > firstDisplay)
+    #expect(titles.firstIndex(of: "        Safari")! < secondDisplay)
+    #expect(titles.firstIndex(of: "        Finder")! > secondDisplay)
+}
+
 @MainActor
 private final class StatusFakeAuthorizer: AccessibilityAuthorizing {
     var trusted: Bool
@@ -316,17 +447,31 @@ private final class StatusFakeWindows: WindowProviding, WindowApplying {
 @MainActor
 private final class StatusFakeMenuPresenter: StatusItemMenuPresenting {
     var presentCount = 0
+    var refreshCount = 0
+    var staleCount = 0
 
     func present(from button: NSStatusBarButton?) {
         presentCount += 1
+    }
+
+    func refreshInventory() {
+        refreshCount += 1
+    }
+
+    func markInventoryStale() {
+        staleCount += 1
     }
 }
 
 @MainActor
 private final class StatusFakeInventory: StatusItemInventoryProviding {
-    let inventory: WindowInventory
+    var inventory: WindowInventory
+    var currentInventoryCallCount = 0
     init(_ inventory: WindowInventory) { self.inventory = inventory }
-    func currentInventory() -> WindowInventory { inventory }
+    func currentInventory() -> WindowInventory {
+        currentInventoryCallCount += 1
+        return inventory
+    }
 }
 
 @MainActor

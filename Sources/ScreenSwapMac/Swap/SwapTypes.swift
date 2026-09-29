@@ -82,6 +82,19 @@ public struct CapturedWindow: Equatable, Sendable {
     }
 }
 
+/// A verified transaction result that is safe to use when updating the
+/// presentation-only menu cache. It intentionally contains no AX handle,
+/// window title, or document content.
+public struct SuccessfulWindowMove: Equatable, Sendable {
+    public let runtimeKey: RuntimeWindowKey
+    public let destinationDisplayID: UInt32
+
+    public init(runtimeKey: RuntimeWindowKey, destinationDisplayID: UInt32) {
+        self.runtimeKey = runtimeKey
+        self.destinationDisplayID = destinationDisplayID
+    }
+}
+
 public enum WindowReadFailureKind: String, Equatable, Sendable {
     case applicationEnumeration
     case visibleWindowEnumeration
