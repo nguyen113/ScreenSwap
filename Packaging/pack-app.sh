@@ -8,6 +8,7 @@ APP_NAME="ScreenSwap"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 INSTALL_PATH="/Applications/$APP_NAME.app"
 INFO_PLIST="$ROOT_DIR/Packaging/Info.plist"
+APP_ICON="$ROOT_DIR/Packaging/ScreenSwap.icns"
 RELEASE_VERSION_FILE="$ROOT_DIR/Packaging/release-version.txt"
 LOCAL_DEVELOPMENT_IDENTITY="ScreenSwap Local Development"
 
@@ -117,6 +118,7 @@ case "$MODE" in
 esac
 
 [[ -f "$RELEASE_VERSION_FILE" ]] || fail "missing distribution version file: $RELEASE_VERSION_FILE"
+[[ -f "$APP_ICON" ]] || fail "missing application icon: $APP_ICON"
 release_version="$(< "$RELEASE_VERSION_FILE")"
 [[ -n "$release_version" ]] || fail "distribution version is empty in $RELEASE_VERSION_FILE"
 ARCHIVE_PATH="$DIST_DIR/$APP_NAME-$release_version.zip"
@@ -150,6 +152,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/ScreenSwapApp"
 cp "$INFO_PLIST" "$APP_BUNDLE/Contents/Info.plist"
+cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/ScreenSwap.icns"
 
 if [[ "$MODE" == "production" ]]; then
     echo "Applying Developer ID signature with hardened runtime..."

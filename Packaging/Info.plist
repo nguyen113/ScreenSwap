@@ -8,6 +8,8 @@
 	<string>ScreenSwapApp</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.nguyen113.screenswap</string>
+	<key>CFBundleIconFile</key>
+	<string>ScreenSwap</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
