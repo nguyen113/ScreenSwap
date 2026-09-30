@@ -104,6 +104,156 @@ be implemented safely using macOS-supported behavior.
 - Accessibility permission for ScreenSwap
 - At least two active displays
 
+## Installation
+
+ScreenSwap can be installed using Homebrew, downloaded as a macOS disk image,
+or built directly from source.
+
+> [!IMPORTANT]
+> ScreenSwap is currently distributed without Apple Developer ID notarization.
+> macOS may block the application the first time you open it.
+>
+> This is expected for the current release. Follow the **Allow ScreenSwap in
+> macOS Security Settings** instructions below.
+
+### Option 1 — Homebrew
+
+Install ScreenSwap from Terminal:
+
+```bash
+brew install --cask nguyen113/tap/screenswap
+```
+
+To update ScreenSwap later:
+
+```bash
+brew upgrade --cask screenswap
+```
+
+ScreenSwap is installed into `/Applications`.
+
+After installation, open **ScreenSwap** from the Applications folder.
+
+If macOS blocks the application, follow the
+**Allow ScreenSwap in macOS Security Settings** instructions below.
+
+---
+
+### Option 2 — Download the DMG
+
+Download the latest:
+
+```text
+ScreenSwap-x.x.x.dmg
+```
+
+from the ScreenSwap GitHub Releases page.
+
+Then:
+
+1. Open the downloaded DMG.
+2. Drag **ScreenSwap** into **Applications**.
+3. Open **Applications → ScreenSwap**.
+4. If macOS blocks the application, follow the instructions below.
+5. Grant ScreenSwap **Accessibility** permission when requested.
+
+---
+
+### Option 3 — Build from source
+
+Requirements:
+
+- macOS 14 or later
+- Xcode / Xcode Command Line Tools
+- Git
+
+Clone ScreenSwap:
+
+```bash
+git clone https://github.com/nguyen113/ScreenSwap-Mac.git
+cd ScreenSwap-Mac
+```
+
+Run the automated build and test suite:
+
+```bash
+./build-test.sh
+```
+
+For development installations, create the local signing identity once:
+
+```bash
+Packaging/create-local-signing-identity.sh
+```
+
+Then package, install, and launch ScreenSwap:
+
+```bash
+Packaging/pack-app.sh --install --replace
+```
+
+The application will be installed into `/Applications`.
+
+The persistent local signing identity helps macOS retain ScreenSwap's
+Accessibility permission across development builds.
+
+---
+
+## Allow ScreenSwap in macOS Security Settings
+
+Because the current ScreenSwap release is not yet Apple-notarized, macOS may
+display a message saying that Apple cannot verify the application or that the
+developer cannot be verified.
+
+First, try to launch ScreenSwap normally from:
+
+**Finder → Applications → ScreenSwap**
+
+macOS may block the launch.
+
+Then:
+
+1. Open **System Settings**.
+2. Select **Privacy & Security**.
+3. Scroll down to the **Security** section.
+4. Look for a message stating that **ScreenSwap was blocked from use**.
+5. Click **Open Anyway**.
+6. Confirm by clicking **Open** when macOS asks again.
+7. Authenticate with Touch ID or your Mac password if requested.
+
+> [!NOTE]
+> The **Open Anyway** button normally appears only after you have attempted to
+> open ScreenSwap and macOS has blocked it.
+
+You should only need to approve the application this way for the initial
+installation, although macOS may request approval again after some updates.
+
+Do **not** disable Gatekeeper globally.
+
+---
+
+## Grant Accessibility Permission
+
+ScreenSwap needs macOS Accessibility permission because it moves and resizes
+windows belonging to other applications.
+
+After ScreenSwap starts:
+
+1. Open **System Settings**.
+2. Go to **Privacy & Security → Accessibility**.
+3. Find **ScreenSwap** in the application list.
+4. Enable the switch next to **ScreenSwap**.
+5. Authenticate with Touch ID or your Mac password if requested.
+6. Relaunch ScreenSwap if macOS asks you to.
+
+If ScreenSwap is not listed, launch it again and perform a swap. macOS should
+prompt for Accessibility access.
+
+ScreenSwap runs in the macOS menu bar and does not open a normal application
+window.
+
+---
+
 ## Use ScreenSwap
 
 1. Launch ScreenSwap and grant Accessibility access when prompted.
