@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>ScreenSwapApp</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.screenswap.app</string>
+	<string>io.github.nguyen113.screenswap</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -15,14 +15,14 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.0</string>
+	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>1</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.screenswap.app.command</string>
+			<string>io.github.nguyen113.screenswap.command</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>screenswap</string>

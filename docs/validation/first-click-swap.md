@@ -27,7 +27,7 @@ displays, so this record must be completed on a Mac before claiming V1-15.
 - Display arrangement and stable IDs: two active, non-mirrored displays detected; stable IDs not collected because the menu-bar-only installed app cannot be inspected through the available UI automation surface.
 - Display resolutions and visible-frame insets: LG ULTRAFINE (main) 3840x2160 / UI 1920x1080 at 60 Hz; built-in Display 2560x1600 / UI 1280x800 at 60 Hz. Visible-frame insets not collected.
 - Applications/windows used: the current ad-hoc ScreenSwap build was installed and running; no test windows were moved.
-- Installed-app launch/liveness: pass — `/Applications/ScreenSwapApp.app` is a macOS 14+ LSUIElement app, its signature verified, and its process was running after replacement.
+- Installed-app launch/liveness: pass — `/Applications/ScreenSwap.app` is a macOS 14+ LSUIElement app, its signature verified, and its process was running after replacement.
 - Automation limitation: the available UI automation service cannot bind to an LSUIElement/status-only application and cannot enumerate the menu-bar button; a direct attachment attempt timed out. Its click could therefore not be targeted safely; no Accessibility setting or window position was changed.
 - Build provenance limitation: the current source was built and installed on 2026-09-21, but its status-item click has not been physically exercised through the available automation surface.
 - Outcome feedback finding: QA-BUG-001 is fixed in source. A click now presents an immediate transient status popover with a safe outcome message; the existing tooltip remains as supplemental feedback.
@@ -44,7 +44,7 @@ displays, so this record must be completed on a Mac before claiming V1-15.
 
 ### Mixed native/full-screen physical validation — 2026-09-22
 
-- Installed build: `/Applications/ScreenSwapApp.app`, signed with the local
+- Installed build: `/Applications/ScreenSwap.app`, signed with the local
   stable development identity and launched by `Packaging/pack-app.sh --install
   --replace`.
 - Displays: ID 2 main, frame `1920x1080`, visible frame `1920x968` with
