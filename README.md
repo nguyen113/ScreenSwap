@@ -155,11 +155,34 @@ Packaging/create-local-signing-identity.sh
 ```
 
 Ad-hoc signing is opt-in (`--allow-ad-hoc`) and may require granting
-Accessibility access again. Release packages must use an explicit Developer ID
-Application identity.
+Accessibility access again.
 
 GitHub releases currently provide source archives. A notarized distributable
 application bundle is not yet provided for every release.
+
+## Beta distribution status
+
+Homebrew beta distribution is planned for v0.1.0-beta.1; no Homebrew tap or
+GitHub Release exists yet. Maintainers can prepare the beta archive locally:
+
+```bash
+Packaging/pack-app.sh --beta
+```
+
+This produces `dist/ScreenSwap.app` and a versioned ZIP such as
+`dist/ScreenSwap-0.1.0-beta.1.zip`, then prints its SHA-256. Beta builds are
+ad-hoc signed and are not notarized or Developer-ID signed. macOS may block the
+first launch; approve ScreenSwap for that app in System Settings → Privacy &
+Security if prompted. Do not disable Gatekeeper globally.
+
+ScreenSwap separately needs Accessibility permission to read and move windows.
+Because beta updates are not distributed with a stable Developer ID identity,
+macOS may occasionally ask users to approve ScreenSwap under Accessibility
+again after an update.
+
+See [beta distribution guidance](docs/BETA_DISTRIBUTION.md) for the future
+personal Homebrew Cask, its expected Gatekeeper limitation, and the production
+signing/notarization upgrade path.
 
 ## Report bugs
 

@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  build-test-and-package-beta:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: ./build-test.sh
+      - name: Package beta locally
+        run: Packaging/pack-app.sh --beta
+      - name: Verify expected beta files
+        run: |
+          test -d dist/ScreenSwap.app
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Packaging/Info.plist)
+          test -f "dist/ScreenSwap-${version}.zip"

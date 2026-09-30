@@ -7,3 +7,10 @@ xcuserdata/
 .env
 .env.*
 /dist/
+*.zip
+*.p12
+*.p8
+*.pem
+*.key
+*.cer
+*.certSigningRequest

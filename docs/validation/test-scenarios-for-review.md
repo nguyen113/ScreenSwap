@@ -9,7 +9,7 @@ and unrelated product features are outside this review.
 
 ## Shared setup and pass criteria
 
-- Use `/Applications/ScreenSwapApp.app` built from the workspace under test.
+- Use `/Applications/ScreenSwap.app` built from the workspace under test.
   Record build identity, macOS version, Accessibility authorization, and whether
   “Displays have separate Spaces” and Stage Manager are enabled.
 - Label the physical screens **A** and **B** by ascending stable display ID;
