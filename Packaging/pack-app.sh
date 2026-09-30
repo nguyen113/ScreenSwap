@@ -8,6 +8,7 @@ APP_NAME="ScreenSwap"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 INSTALL_PATH="/Applications/$APP_NAME.app"
 INFO_PLIST="$ROOT_DIR/Packaging/Info.plist"
+RELEASE_VERSION_FILE="$ROOT_DIR/Packaging/release-version.txt"
 LOCAL_DEVELOPMENT_IDENTITY="ScreenSwap Local Development"
 
 MODE="development"
@@ -115,9 +116,10 @@ case "$MODE" in
         ;;
 esac
 
-version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
-[[ -n "$version" ]] || fail "CFBundleShortVersionString is empty in $INFO_PLIST"
-ARCHIVE_PATH="$DIST_DIR/$APP_NAME-$version.zip"
+[[ -f "$RELEASE_VERSION_FILE" ]] || fail "missing distribution version file: $RELEASE_VERSION_FILE"
+release_version="$(< "$RELEASE_VERSION_FILE")"
+[[ -n "$release_version" ]] || fail "distribution version is empty in $RELEASE_VERSION_FILE"
+ARCHIVE_PATH="$DIST_DIR/$APP_NAME-$release_version.zip"
 
 case "$MODE" in
     development)

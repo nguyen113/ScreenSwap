@@ -15,8 +15,9 @@ Packaging/pack-app.sh --beta
 The script builds the release executable, constructs `dist/ScreenSwap.app`,
 ad-hoc signs it, verifies its code signature, creates
 `dist/ScreenSwap-0.1.0-beta.1.zip`, and prints the archive's SHA-256. The
-archive name is derived from `CFBundleShortVersionString` in
-`Packaging/Info.plist`; do not copy the version into release scripts.
+archive name is derived from `Packaging/release-version.txt`. The app bundle's
+`CFBundleShortVersionString` remains the valid macOS version `0.1.0`; do not
+use it to name distribution artifacts.
 
 An ad-hoc signature is deliberately not a Developer ID signature and does not
 notarize the app. Gatekeeper may block the first launch. Users should follow
@@ -34,6 +35,12 @@ Once the ZIP has been uploaded to the matching GitHub Release and its final
 SHA-256 is known, a personal tap can use this Cask. It is documentation only;
 do not publish it until the release exists.
 
+Once that tap exists, the intended beta installation command is:
+
+```bash
+brew install --cask nguyen113/tap/screenswap
+```
+
 ```ruby
 cask "screenswap" do
   version "0.1.0-beta.1"
@@ -48,16 +55,15 @@ cask "screenswap" do
 
   app "ScreenSwap.app"
 
-  caveats <<~EOS
-    ScreenSwap beta is not notarized because it is currently distributed
-    without an Apple Developer Program membership.
-
-    macOS may require manual approval in System Settings > Privacy & Security.
-
-    ScreenSwap also requires Accessibility permission to move windows.
-  EOS
+  caveats do
+    unsigned_accessibility
+  end
 end
 ```
+
+This beta is not Developer-ID signed or notarized, so macOS may require normal
+per-app approval in System Settings → Privacy & Security. Do not disable
+Gatekeeper globally.
 
 ## Development, beta, and production modes
 

@@ -36,5 +36,15 @@ jobs:
       - name: Build and run tests
         run: ./build-test.sh
 
+      - name: Package beta artifact
+        run: Packaging/pack-app.sh --beta
+
+      - name: Validate beta artifact
+        shell: bash
+        run: |
+          test -d dist/ScreenSwap.app
+          release_version="$(cat Packaging/release-version.txt)"
+          test -f "dist/ScreenSwap-${release_version}.zip"
+
       - name: Check pull request diff
         run: git diff --check "${{ github.event.pull_request.base.sha }}" HEAD
