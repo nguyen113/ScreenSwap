@@ -21,6 +21,10 @@ ScreenSwap is an early macOS release. It is useful for its supported
 two-display workflow, but physical validation across different displays, apps,
 and macOS Spaces is still important before relying on it in a critical setup.
 
+## Demo
+
+[![Watch the ScreenSwap demo on YouTube](https://i.ytimg.com/vi/8VaTokzlOUM/hqdefault.jpg)](https://www.youtube.com/watch?v=8VaTokzlOUM)
+
 ## Highlights
 
 - Swaps visible eligible windows across applications—not only the frontmost app.
