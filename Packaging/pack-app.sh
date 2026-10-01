@@ -25,7 +25,7 @@ Usage: Packaging/pack-app.sh [options]
 
 Modes (choose at most one):
   (default)                    Development build; uses the local stable identity when available.
-  --beta                       Ad-hoc signed beta ZIP; not Developer ID signed or notarized.
+  --beta                       Ad-hoc signed beta ZIP and DMG; not Developer ID signed or notarized.
   --release                    Production build; requires Developer ID signing and notarization.
 
 Options:
@@ -122,6 +122,7 @@ esac
 release_version="$(< "$RELEASE_VERSION_FILE")"
 [[ -n "$release_version" ]] || fail "distribution version is empty in $RELEASE_VERSION_FILE"
 ARCHIVE_PATH="$DIST_DIR/$APP_NAME-$release_version.zip"
+DMG_PATH="$DIST_DIR/$APP_NAME-$release_version.dmg"
 
 case "$MODE" in
     development)
@@ -142,15 +143,17 @@ esac
 
 cd "$ROOT_DIR"
 
-echo "Building release binary..."
-swift build -c release --product ScreenSwapApp
-BIN_PATH="$(swift build -c release --show-bin-path)/ScreenSwapApp"
+echo "Building release binaries for Apple silicon and Intel Macs..."
+swift build -c release --arch arm64 --product ScreenSwapApp
+ARM_BIN_PATH="$(swift build -c release --arch arm64 --show-bin-path)/ScreenSwapApp"
+swift build -c release --arch x86_64 --product ScreenSwapApp
+INTEL_BIN_PATH="$(swift build -c release --arch x86_64 --show-bin-path)/ScreenSwapApp"
 
 echo "Creating $APP_BUNDLE"
 mkdir -p "$DIST_DIR"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
-cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/ScreenSwapApp"
+lipo -create "$ARM_BIN_PATH" "$INTEL_BIN_PATH" -output "$APP_BUNDLE/Contents/MacOS/ScreenSwapApp"
 cp "$INFO_PLIST" "$APP_BUNDLE/Contents/Info.plist"
 cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/ScreenSwap.icns"
 
@@ -177,7 +180,7 @@ if [[ "$MODE" == "production" ]]; then
     # after stapling so the final distribution archive contains the ticket.
     rm -f "$ARCHIVE_PATH"
     echo "Creating notarization submission archive..."
-    ditto -c -k --keepParent "$APP_BUNDLE" "$ARCHIVE_PATH"
+    ditto -c -k --norsrc --keepParent "$APP_BUNDLE" "$ARCHIVE_PATH"
     echo "Submitting app for notarization..."
     xcrun notarytool submit "$ARCHIVE_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
     echo "Stapling notarization ticket..."
@@ -191,10 +194,21 @@ fi
 if [[ "$MODE" == "beta" || "$MODE" == "production" ]]; then
     rm -f "$ARCHIVE_PATH"
     echo "Creating $ARCHIVE_PATH"
-    ditto -c -k --keepParent "$APP_BUNDLE" "$ARCHIVE_PATH"
+    ditto -c -k --norsrc --keepParent "$APP_BUNDLE" "$ARCHIVE_PATH"
     archive_hash="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{ print $1 }')"
     echo "Artifact: $ARCHIVE_PATH"
     echo "SHA256: $archive_hash"
+    dmg_stage="$(mktemp -d "$DIST_DIR/.screenswap-dmg.XXXXXX")"
+    ditto "$APP_BUNDLE" "$dmg_stage/$APP_NAME.app"
+    ln -s /Applications "$dmg_stage/Applications"
+    rm -f "$DMG_PATH"
+    echo "Creating $DMG_PATH"
+    hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$dmg_stage" -format UDZO "$DMG_PATH"
+    rm -rf "$dmg_stage"
+    hdiutil verify -quiet "$DMG_PATH"
+    dmg_hash="$(shasum -a 256 "$DMG_PATH" | awk '{ print $1 }')"
+    echo "Artifact: $DMG_PATH"
+    echo "SHA256: $dmg_hash"
     if [[ "$MODE" == "beta" ]]; then
         echo "Beta limitation: this artifact is ad-hoc signed and not notarized; Gatekeeper approval may be required on first launch."
     fi

@@ -8,6 +8,7 @@ xcuserdata/
 .env.*
 /dist/
 *.zip
+*.dmg
 *.p12
 *.p8
 *.pem
