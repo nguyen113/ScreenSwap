@@ -254,6 +254,8 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
     private let selection: WindowSelectionStore?
     private let displaySelection: DisplayPairSelectionStore?
     private let shortcutRegistration: ((HotKeyShortcut) -> Bool)?
+    private let moveShortcutRegistration: ((HotKeyShortcut) -> Bool)?
+    public var moveFocusedWindowAction: (() -> Void)?
     /// Inventory collection crosses process boundaries through Accessibility.
     /// Keep that work out of menu presentation and checkbox actions so the
     /// status menu stays responsive even when another app responds slowly.
@@ -267,7 +269,8 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         inventoryProvider: (any StatusItemInventoryProviding)? = nil,
         selection: WindowSelectionStore? = nil,
         displaySelection: DisplayPairSelectionStore? = nil,
-        shortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil
+        shortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil,
+        moveShortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil
     ) {
         self.terminator = terminator
         self.settings = settings
@@ -276,6 +279,7 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         self.selection = selection
         self.displaySelection = displaySelection
         self.shortcutRegistration = shortcutRegistration
+        self.moveShortcutRegistration = moveShortcutRegistration
         menu = NSMenu()
         super.init()
         refreshInventory()
@@ -470,6 +474,13 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
 
     private func appendUtilityItems(separatorNeeded: Bool) {
         if separatorNeeded { menu.addItem(.separator()) }
+        if moveFocusedWindowAction != nil {
+            let move = NSMenuItem(title: "Move Focused Window to Other Display", action: #selector(moveFocusedWindowSelected(_:)), keyEquivalent: "")
+            move.target = self
+            move.toolTip = "Middle-click the ScreenSwap icon or use the configured shortcut."
+            menu.addItem(move)
+            menu.addItem(.separator())
+        }
         let about = NSMenuItem(title: "About ScreenSwap", action: #selector(showAbout(_:)), keyEquivalent: "")
         about.target = self; menu.addItem(about)
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
@@ -519,6 +530,10 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         refreshInventory()
     }
 
+    @objc private func moveFocusedWindowSelected(_ sender: Any?) {
+        moveFocusedWindowAction?()
+    }
+
     private func menuState(_ state: WindowSelectionState) -> NSControl.StateValue {
         switch state {
         case .off: return .off
@@ -538,7 +553,8 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
             SettingsWindowController.show(
                 settings: settings,
                 authorization: authorization,
-                shortcutRegistration: shortcutRegistration
+                shortcutRegistration: shortcutRegistration,
+                moveShortcutRegistration: moveShortcutRegistration
             )
         }
     }
@@ -625,11 +641,39 @@ public final class StatusItemActionHandler {
     /// click handler, while allowing AX frame verification to poll without
     /// blocking the AppKit event loop.
     public func handleMeasuredClick(commandReceivedNanoseconds: UInt64) async -> SwapOutcome {
+        await handleMeasured(commandReceivedNanoseconds: commandReceivedNanoseconds, focusedWindowKey: nil)
+    }
+
+    public func handleMeasuredMove(
+        _ key: RuntimeWindowKey,
+        commandReceivedNanoseconds: UInt64
+    ) async -> SwapOutcome {
+        await handleMeasured(commandReceivedNanoseconds: commandReceivedNanoseconds, focusedWindowKey: key)
+    }
+
+    private func handleMeasured(commandReceivedNanoseconds: UInt64, focusedWindowKey: RuntimeWindowKey?) async -> SwapOutcome {
         isEnabled = false
         defer { isEnabled = true }
-        let outcome = await coordinator.swapMeasured(commandReceivedNanoseconds: commandReceivedNanoseconds).outcome
+        let outcome: SwapOutcome
+        if let focusedWindowKey {
+            outcome = await coordinator.moveFocusedWindowMeasured(
+                focusedWindowKey, commandReceivedNanoseconds: commandReceivedNanoseconds
+            ).outcome
+        } else {
+            outcome = await coordinator.swapMeasured(commandReceivedNanoseconds: commandReceivedNanoseconds).outcome
+        }
         diagnostics = coordinator.lastDiagnostics
         feedback = StatusItemFeedbackCatalog.feedback(for: outcome)
+        if focusedWindowKey != nil {
+            switch outcome {
+            case .success:
+                feedback = StatusItemFeedback(title: "Window moved", message: "Moved to the other selected display.")
+            case .noMoves:
+                feedback = StatusItemFeedback(title: "Window not moved", message: "The focused window is unavailable on the selected display pair.")
+            default:
+                break
+            }
+        }
         switch outcome {
         case .noPermission:
             if !didRequestAccess {
@@ -743,9 +787,14 @@ private final class StatusFeedbackViewController: NSViewController {
 public final class StatusBarController: NSObject {
     private let statusItem: NSStatusItem
     private let actionHandler: StatusItemActionHandler
+    private let authorization: any AccessibilityAuthorizing
+    private let focusedWindowProvider: any FocusedWindowProviding
     private let feedbackPresenter: any StatusItemFeedbackPresenting
+    private let menuController: StatusItemMenuController
     private let clickRouter: StatusItemClickRouter
     private let iconAnimation = IconAnimationController()
+    private var menuFocusedWindowKey: RuntimeWindowKey?
+    private var middleClickMonitor: MiddleClickMonitor?
 
     public init(
         coordinator: SwapCoordinator,
@@ -755,21 +804,34 @@ public final class StatusBarController: NSObject {
         selection: WindowSelectionStore? = nil,
         displaySelection: DisplayPairSelectionStore? = nil,
         shortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil,
+        moveShortcutRegistration: ((HotKeyShortcut) -> Bool)? = nil,
+        focusedWindowProvider: (any FocusedWindowProviding)? = nil,
         feedbackPresenter: any StatusItemFeedbackPresenting = StatusPopoverFeedbackPresenter()
     ) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         actionHandler = StatusItemActionHandler(coordinator: coordinator, authorization: authorization)
+        self.authorization = authorization
+        self.focusedWindowProvider = focusedWindowProvider ?? LiveFocusedWindowProvider(authorization: authorization)
         self.feedbackPresenter = feedbackPresenter
-        clickRouter = StatusItemClickRouter(menuPresenter: StatusItemMenuController(
+        menuController = StatusItemMenuController(
             settings: settings,
             authorization: authorization,
             inventoryProvider: inventoryProvider,
             selection: selection,
             displaySelection: displaySelection,
-            shortcutRegistration: shortcutRegistration
-        ))
+            shortcutRegistration: shortcutRegistration,
+            moveShortcutRegistration: moveShortcutRegistration
+        )
+        clickRouter = StatusItemClickRouter(menuPresenter: menuController)
         super.init()
+        menuController.moveFocusedWindowAction = { [weak self] in self?.moveMenuFocusedWindow() }
         configureButton()
+        middleClickMonitor = MiddleClickMonitor(
+            iconFrame: { [weak self] in self?.quartzButtonFrame() },
+            focusedWindowKey: { [weak self] in self?.focusedWindowProvider.focusedWindowKey() },
+            onClick: { [weak self] key in self?.performMove(key: key) }
+        )
+        middleClickMonitor?.start()
     }
 
     private func configureButton() {
@@ -784,7 +846,7 @@ public final class StatusBarController: NSObject {
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        button.toolTip = actionHandler.tooltip
+        button.toolTip = buttonToolTip
         button.addTrackingArea(NSTrackingArea(rect: button.bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
     }
 
@@ -817,8 +879,13 @@ public final class StatusBarController: NSObject {
         switch NSApp.currentEvent?.type {
         case .rightMouseDown, .rightMouseUp:
             mouseButton = .right
+        case .otherMouseDown, .otherMouseUp:
+            return
         default:
             mouseButton = .left
+        }
+        if mouseButton == .right {
+            menuFocusedWindowKey = focusedWindowProvider.focusedWindowKey()
         }
         clickRouter.route(mouseButton: mouseButton, button: statusItem.button) { [weak self] in
             self?.performLeftClick()
@@ -832,6 +899,56 @@ public final class StatusBarController: NSObject {
         performLeftClick()
     }
 
+    public func triggerMoveFocusedWindow() {
+        performMove(key: focusedWindowProvider.focusedWindowKey())
+    }
+
+    private func moveMenuFocusedWindow() {
+        performMove(key: menuFocusedWindowKey)
+        menuFocusedWindowKey = nil
+    }
+
+    private func quartzButtonFrame() -> CGRect? {
+        guard let button = statusItem.button, let window = button.window else { return nil }
+        let appKitFrame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        return AppKitCoordinateConverter(mainDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height)
+            .quartzRect(from: appKitFrame)
+    }
+
+    private var buttonToolTip: String {
+        actionHandler.tooltip + "\nMiddle-click to move the focused window."
+    }
+
+    private func performMove(key: RuntimeWindowKey?) {
+        guard authorization.isTrusted else {
+            authorization.requestAccess()
+            feedbackPresenter.present(StatusItemFeedbackCatalog.feedback(for: .noPermission), from: statusItem.button)
+            return
+        }
+        guard let key else {
+            feedbackPresenter.present(
+                StatusItemFeedback(title: "No focused window", message: "Focus a movable window and try again."),
+                from: statusItem.button
+            )
+            return
+        }
+        let commandReceived = actionHandler.commandReceivedNanoseconds()
+        statusItem.button?.isEnabled = false
+        iconAnimation.beganSwap()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let outcome = await actionHandler.handleMeasuredMove(key, commandReceivedNanoseconds: commandReceived)
+            feedbackPresenter.present(actionHandler.feedback, from: statusItem.button)
+            statusItem.button?.toolTip = buttonToolTip
+            statusItem.button?.isEnabled = actionHandler.isEnabled
+            iconAnimation.endedSwap()
+            if StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: outcome) {
+                clickRouter.applySuccessfulMoves(actionHandler.latestSuccessfulWindowMoves)
+                clickRouter.markMenuInventoryStale()
+            }
+        }
+    }
+
     private func performLeftClick() {
         let commandReceived = actionHandler.commandReceivedNanoseconds()
         statusItem.button?.isEnabled = false
@@ -840,7 +957,7 @@ public final class StatusBarController: NSObject {
             guard let self else { return }
             let outcome = await actionHandler.handleMeasuredClick(commandReceivedNanoseconds: commandReceived)
             feedbackPresenter.present(actionHandler.feedback, from: statusItem.button)
-            statusItem.button?.toolTip = actionHandler.tooltip
+            statusItem.button?.toolTip = buttonToolTip
             statusItem.button?.isEnabled = actionHandler.isEnabled
             iconAnimation.endedSwap()
             if StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: outcome) {

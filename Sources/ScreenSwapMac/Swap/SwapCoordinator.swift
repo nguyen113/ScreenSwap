@@ -188,6 +188,22 @@ public final class SwapCoordinator {
     /// all issued before verification starts; verification polls at most every
     /// five milliseconds and never adds a presentation delay.
     public func swapMeasured(commandReceivedNanoseconds: UInt64? = nil) async -> MeasuredSwapResult {
+        await performMeasured(commandReceivedNanoseconds: commandReceivedNanoseconds, focusedWindowKey: nil)
+    }
+
+    /// Move only the focused runtime window across the selected display pair.
+    /// The full eligible batch is still captured before planning and writing.
+    public func moveFocusedWindowMeasured(
+        _ key: RuntimeWindowKey,
+        commandReceivedNanoseconds: UInt64? = nil
+    ) async -> MeasuredSwapResult {
+        await performMeasured(commandReceivedNanoseconds: commandReceivedNanoseconds, focusedWindowKey: key)
+    }
+
+    private func performMeasured(
+        commandReceivedNanoseconds: UInt64?,
+        focusedWindowKey: RuntimeWindowKey?
+    ) async -> MeasuredSwapResult {
         let t0 = commandReceivedNanoseconds ?? clock.nowNanoseconds()
         guard !isRunning else {
             lastDiagnostics = .empty
@@ -265,10 +281,11 @@ public final class SwapCoordinator {
         let selectedKeys = selection?.frozenSelectedKeys()
         let selectedWindows = batch.windows.filter { window in
             guard window.presentationState.isFullScreen != true else { return false }
+            if let focusedWindowKey { return window.runtimeKey == focusedWindowKey }
             guard let selectedKeys else { return true }
             return window.runtimeKey.map { selectedKeys.contains($0) } ?? true
         }
-        if selectedKeys != nil && selectedWindows.isEmpty && batch.windows.contains(where: { $0.presentationState.isFullScreen != true }) {
+        if focusedWindowKey == nil && selectedKeys != nil && selectedWindows.isEmpty && batch.windows.contains(where: { $0.presentationState.isFullScreen != true }) {
             let now = clock.nowNanoseconds()
             lastDiagnostics = makeDiagnostics(
                 batch: batch,

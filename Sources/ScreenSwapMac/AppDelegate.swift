@@ -24,9 +24,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             displaySelection: dependencies.displayPairSelectionStore,
             shortcutRegistration: { [weak self] shortcut in
                 self?.registerGlobalShortcut(shortcut) ?? false
+            },
+            moveShortcutRegistration: { [weak self] shortcut in
+                self?.registerMoveShortcut(shortcut) ?? false
             }
         )
         _ = registerGlobalShortcut(dependencies.settings.shortcut)
+        _ = registerMoveShortcut(dependencies.settings.moveShortcut)
     }
 
     public func application(_ application: NSApplication, open urls: [URL]) {
@@ -68,6 +72,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerGlobalShortcut(_ shortcut: HotKeyShortcut) -> Bool {
         hotKeyService?.register(shortcut) { [weak self] in
             self?.statusBarController?.triggerSwap()
+        } ?? false
+    }
+
+    private func registerMoveShortcut(_ shortcut: HotKeyShortcut) -> Bool {
+        hotKeyService?.registerMove(shortcut) { [weak self] in
+            self?.statusBarController?.triggerMoveFocusedWindow()
         } ?? false
     }
 }
