@@ -276,6 +276,81 @@ private func captured(
 
 @Test
 @MainActor
+func focusedWindowMoveIgnoresSwapCheckboxAndMovesOnlyItsRuntimeKey() async {
+    let firstKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1)
+    let secondKey = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 2)
+    let first = captured("focused", runtimeKey: firstKey)
+    let second = captured("other", runtimeKey: secondKey)
+    let store = WindowSelectionStore()
+    store.reconcile([firstKey, secondKey])
+    store.setSelected(false, for: firstKey)
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [first, second]))
+    let verifier = CountingBatchVerifier(rounds: [[first.snapshot.id: .verified]])
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows,
+        windowVerifier: verifier,
+        selection: store
+    )
+
+    let result = await coordinator.moveFocusedWindowMeasured(firstKey)
+
+    #expect(result.outcome == .success(attempted: 1, succeeded: 1))
+    #expect(windows.applied.map { $0.0.windowID } == [first.snapshot.id])
+    #expect(windows.applied.first?.0.destinationDisplayID == 2)
+    #expect(coordinator.latestPreSwapSnapshots.count == 2)
+    #expect(!store.isSelected(firstKey))
+}
+
+@Test
+@MainActor
+func focusedWindowMoveRejectsStaleKeyWithoutWrites() async {
+    let window = captured("available", runtimeKey: RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 1))
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 2)),
+        windowProvider: windows,
+        windowApplying: windows
+    )
+
+    let result = await coordinator.moveFocusedWindowMeasured(RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 99))
+
+    #expect(result.outcome == .noMoves)
+    #expect(windows.applied.isEmpty)
+}
+
+@Test
+@MainActor
+func focusedWindowMoveLeavesUnselectedDisplayUntouched() async {
+    let key = RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 3)
+    let window = CapturedWindow(
+        snapshot: WindowSnapshot(
+            id: WindowID(processIdentifier: 10, accessibilityIdentifier: "third-display"),
+            sourceDisplayID: 3,
+            frame: CGRect(x: 2_100, y: 100, width: 300, height: 200)
+        ),
+        isResizable: true,
+        runtimeKey: key
+    )
+    let windows = FakeWindows(batch: WindowCaptureBatch(windows: [window]))
+    let coordinator = SwapCoordinator(
+        authorization: FakeAuthorizer(trusted: true),
+        displays: FakeDisplays(displays(count: 3)),
+        windowProvider: windows,
+        windowApplying: windows
+    )
+
+    let result = await coordinator.moveFocusedWindowMeasured(key)
+
+    #expect(result.outcome == .noMoves)
+    #expect(windows.applied.isEmpty)
+}
+
+@Test
+@MainActor
 func coordinatorChecksTrustBeforeDisplaysAndWritesNothingWithoutPermission() {
     let log = EventLog()
     let auth = FakeAuthorizer(trusted: false, log: log)

@@ -32,6 +32,9 @@ and macOS Spaces is still important before relying on it in a critical setup.
   pair from the menu when three or more displays are connected.
 - Lets you include or exclude individual windows, or use an `All windows` row
   for each selected display.
+- Moves the focused window to the other selected display with a separate
+  configurable shortcut (Control–Option–Shift–S by default), a middle-click on
+  the menu-bar icon, or a menu command.
 - Preserves proportional placement across displays with different resolutions,
   aspect ratios, and usable areas.
 - Protects spanning, minimized, transient, non-movable, and off-screen windows.
@@ -181,6 +184,14 @@ app if macOS asks you to. Beta updates may require approval again.
    move. Window choices are retained while a display is outside the active pair.
 5. Left-click the menu-bar item or press Control–Shift–S to swap the selected
    windows between the active pair.
+6. To move only the focused window, middle-click the ScreenSwap menu-bar icon
+   or press Control–Option–Shift–S. You can also focus the window, then
+   right-click ScreenSwap and choose **Move Focused Window to Other Display**.
+   Set either keyboard shortcut in Settings.
+
+The focused-window command works independently of the swap checkboxes. It
+moves an eligible window between the two selected displays; windows on other
+displays are left in place.
 
 Display checkmarks choose *which monitors participate*. The nested window
 checkmarks choose *which windows participate*. A window on an unselected

@@ -19,7 +19,8 @@ StatusBarController --> SwapCoordinator --> AccessibilityWindowService
        |                       +--> WindowSelectionStore + WindowMappingEngine
        |
        +--> LiveStatusItemInventoryProvider --> read-only AX/Quartz inventory
-       +--> GlobalHotKeyService --> same left-click swap action
+       +--> GlobalHotKeyService --> swap / focused-window move
+       +--> FocusedWindowProvider --> targeted move through SwapCoordinator
        +--> Settings / About windows
 ```
 
@@ -63,6 +64,18 @@ also retains the complete immutable pre-swap snapshot in memory for a future
 undo feature; no AX handles persist beyond the transaction.
 
 Never discover and mutate windows interleaved.
+
+The focused-window command reads the AX-focused window from the frontmost
+application after checking Accessibility trust, then matches its frame and
+process ID to a Quartz window number. The runtime key is held for one command.
+The coordinator captures the complete eligible batch and plans only that key,
+ignoring the ordinary swap checkboxes. The same topology check, AX apply,
+verification, restoration, and non-sensitive diagnostics govern the move.
+The menu freezes the focused key when it opens so clicking its command cannot
+retarget another window.
+The status item also observes middle-button down/up events locally and globally.
+It accepts a click only when button 2 starts and ends over the icon, freezing
+the focused key at mouse-down before routing through the same targeted move.
 
 `AccessibilityWindowService` owns OS-specific capability decisions. In
 particular, a non-resizable window keeps its actual captured size; only its

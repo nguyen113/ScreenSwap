@@ -207,6 +207,20 @@ func statusItemExitMenuContainsNativeActionThatTerminatesOnlyScreenSwap() {
 
 @Test
 @MainActor
+func statusMenuOffersFocusedWindowMoveAction() {
+    let menuController = StatusItemMenuController()
+    var moves = 0
+    menuController.moveFocusedWindowAction = { moves += 1 }
+    menuController.rebuildMenu()
+
+    let item = menuController.menu.items.first { $0.title == "Move Focused Window to Other Display" }
+    #expect(item != nil)
+    menuController.perform(NSSelectorFromString("moveFocusedWindowSelected:"), with: item)
+    #expect(moves == 1)
+}
+
+@Test
+@MainActor
 func statusMenuBuildsFreshDisplayGroupsSelectionAndSpanningWarning() {
     let firstKey = RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 10)
     let secondKey = RuntimeWindowKey(processIdentifier: 2, quartzWindowNumber: 20)
