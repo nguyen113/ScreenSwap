@@ -31,7 +31,10 @@ aee7d36d31ad567f539d834707bf4a8ab860759f5628739e08c7b06f780dc7d7  ScreenSwap-1.0
 
 ## Physical validation status
 
-This release preparation changes documentation and version metadata; no window
+This release preparation changes documentation, version metadata, and two
+polling tests to use the existing fake clock. The initial GitHub CI run exposed
+a scheduling stall that hit the real 500 ms verification deadline in a
+poll-count test; the fake clock makes those assertions deterministic. No window
 behavior was changed and no new physical display/window test was performed.
 The earlier Call/Return build was user-confirmed as working, as recorded in
 [Call/Return validation](call-return.md). That confirmation predates the newer

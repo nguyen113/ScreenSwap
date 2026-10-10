@@ -210,7 +210,9 @@ func measuredSwapRechecksWholeBatchWithOneSnapshotPerPoll() async {
     let coordinator = SwapCoordinator(
         authorization: FakeAuthorizer(trusted: true), displays: FakeDisplays(displays(count: 2)),
         windowProvider: provider, windowApplying: provider,
-        planner: FakePlanner(log: EventLog(), moves: moves), windowVerifier: verifier
+        // Poll-count assertions must not depend on CI scheduling or wall time.
+        planner: FakePlanner(log: EventLog(), moves: moves), windowVerifier: verifier,
+        clock: RollbackClock()
     )
 
     #expect((await coordinator.swapMeasured()).outcome == .success(attempted: 4, succeeded: 4))
@@ -232,7 +234,7 @@ func measuredSwapReappliesOnceWhenRaiseChangesGeometry() async {
         authorization: FakeAuthorizer(trusted: true), displays: FakeDisplays(displays(count: 2)),
         windowProvider: provider, windowApplying: provider,
         planner: FakePlanner(log: EventLog(), moves: [move]), windowVerifier: verifier,
-        windowVisibilityRecoverer: recoverer
+        windowVisibilityRecoverer: recoverer, clock: RollbackClock()
     )
 
     #expect((await coordinator.swapMeasured()).outcome == .success(attempted: 1, succeeded: 1))
