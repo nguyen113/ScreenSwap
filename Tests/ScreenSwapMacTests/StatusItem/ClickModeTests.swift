@@ -64,8 +64,9 @@ func moveArrowTracksFocusAndDestinationInQuartzCoordinates() {
         let displays = [destination, source]
         #expect(MoveArrowDirection.resolve(activeFrame: CGRect(x: 100, y: 100, width: 100, height: 100), displays: displays, pair: [77, 3]) == forward)
         #expect(MoveArrowDirection.resolve(activeFrame: CGRect(x: x + 100, y: y + 100, width: 100, height: 100), displays: displays, pair: [77, 3]) == reverse)
-        #expect(StatusItemAppearance.symbolName(mode: .move, direction: forward) == forward.symbolName)
-        #expect(StatusItemAppearance.symbolName(mode: .swap, direction: forward) == "arrow.left.arrow.right")
+        let expectedPackMode: StatusIconMode? = forward == .left ? .moveLeft : forward == .right ? .moveRight : nil
+        #expect(StatusItemAppearance.iconMode(mode: .move, direction: forward) == expectedPackMode)
+        #expect(StatusItemAppearance.iconMode(mode: .swap, direction: forward) == .swap)
     }
 }
 
@@ -78,7 +79,7 @@ func moveArrowCannotResolveSpanningThirdDisplayOrDisconnectedDestination() {
     #expect(MoveArrowDirection.resolve(activeFrame: CGRect(x: 1050, y: 50, width: 100, height: 100), displays: displays, pair: [1, 2]) == nil)
     #expect(MoveArrowDirection.resolve(activeFrame: CGRect(x: 50, y: 50, width: 100, height: 100), displays: displays, pair: [1, 4]) == nil)
     #expect(MoveArrowDirection.resolve(activeFrame: CGRect(x: 50, y: 50, width: 100, height: 100), displays: displays, pair: [1]) == nil)
-    #expect(StatusItemAppearance.symbolName(mode: .move, direction: nil) == "arrow.right")
+    #expect(StatusItemAppearance.iconMode(mode: .move, direction: nil) == .moveRight)
 }
 
 @Test

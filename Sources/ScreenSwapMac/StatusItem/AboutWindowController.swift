@@ -12,10 +12,13 @@ final class AboutWindowController: NSWindowController {
         text.alignment = .center
         let github = NSButton(title: "Open GitHub", target: nil, action: #selector(openGitHub))
         let support = NSButton(title: "Support ScreenSwap on Ko-fi", target: nil, action: #selector(openSupport))
-        let stack = NSStackView(views: [text, github, support])
+        let icon = NSImageView(image: StatusIconImages.appIcon ?? NSImage())
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([icon.widthAnchor.constraint(equalToConstant: 64), icon.heightAnchor.constraint(equalToConstant: 64)])
+        let stack = NSStackView(views: [icon, text, github, support])
         stack.orientation = .vertical; stack.alignment = .centerX; stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 170))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 246))
         view.addSubview(stack)
         NSLayoutConstraint.activate([stack.centerXAnchor.constraint(equalTo: view.centerXAnchor), stack.centerYAnchor.constraint(equalTo: view.centerYAnchor)])
         let window = NSWindow(contentRect: view.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)

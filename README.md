@@ -43,7 +43,7 @@ and macOS Spaces is still important before relying on it in a critical setup.
   its prior frame.
 - Includes a configurable global shortcut (default: Control–Shift–S),
   Accessibility onboarding, optional launch at login, About, and Reduce Motion
-  aware hover feedback.
+  aware action feedback.
 
 ## ⚠️ Important limitation: native macOS full-screen windows
 
@@ -188,7 +188,7 @@ app if macOS asks you to. Beta updates may require approval again.
    mouse default. Middle-click always performs the other mode. The choice is
    saved across launches. **MOVE** moves only the frontmost focused window;
    **SWAP** swaps the checked windows.
-7. The menu-bar label changes to **SWAP** with two-way arrows or **MOVE** with
+7. The menu-bar icon changes to **SWAP** with two-way arrows or **MOVE** with
    one arrow pointing toward the destination display. The MOVE arrow updates
    as focus, window position, or display arrangement changes. When no direction
    can be resolved, it shows a neutral right-pointing arrow; the move still
@@ -213,9 +213,22 @@ the first Accessibility write. It rechecks display IDs and geometry before
 mutation, and aborts without moving anything if the display topology changed
 during the operation.
 
+The menu bar uses the Option A window-exchange icon from icon pack v3.1.3.
+The blue Swap artwork is the permanent application icon and appears in About.
+Idle icons stay static; fully successful swaps show 200ms of feedback and
+horizontal focused-window moves show 180ms in their physical direction before
+returning to the configured default icon. Vertical and diagonal MOVE directions
+use a static native arrow because the pack supplies only horizontal MOVE art.
+The item remains icon-only; its tooltip and Accessibility label identify the
+configured actions. Reduce Motion
+skips animation, including when enabled during playback. Permission and
+insufficient-display failures use a dim icon while keeping help and selection
+accessible. Call/Return is planned in [the backlog](backlog.yml) for a future
+release.
+
 The app intentionally does not implement three-way rotation or general
-N-display routing. Every transaction operates on the selected display pair, using either a
-layout swap or a focused-window move.
+N-display routing. Every transaction operates on the selected display pair,
+using either a layout swap or a focused-window move.
 
 macOS does not provide a reliable public API for moving arbitrary foreign-app
 windows between Spaces. ScreenSwap therefore leaves native full-screen Spaces

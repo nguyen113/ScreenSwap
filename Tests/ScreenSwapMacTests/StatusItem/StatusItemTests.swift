@@ -5,8 +5,8 @@ import Testing
 @testable import ScreenSwapMac
 
 @Test
-func statusItemUsesExplicitSwapLabel() {
-    #expect(StatusItemAppearance.title == "SWAP")
+func statusItemUsesIconOnlyAppearance() {
+    #expect(StatusItemAppearance.title.isEmpty)
 }
 
 @Test
