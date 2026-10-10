@@ -15,6 +15,7 @@ public final class SwapCoordinator {
     private let performanceRecorder: (any SwapPerformanceRecording)?
     private let selection: (any SwapSelectionProviding)?
     private let displaySelection: DisplayPairSelectionStore
+    private let settings: ScreenSwapSettings?
     private var isRunning = false
     private struct CalledWindow {
         let key: RuntimeWindowKey
@@ -54,6 +55,7 @@ public final class SwapCoordinator {
         windowVisibilityRecoverer: (any WindowVisibilityRecovering)? = nil,
         selection: (any SwapSelectionProviding)? = nil,
         displaySelection: DisplayPairSelectionStore = DisplayPairSelectionStore(),
+        settings: ScreenSwapSettings? = nil,
         clock: any MonotonicTimeSource = MachContinuousTimeSource(),
         performanceRecorder: (any SwapPerformanceRecording)? = nil
     ) {
@@ -69,6 +71,7 @@ public final class SwapCoordinator {
         self.performanceRecorder = performanceRecorder
         self.selection = selection
         self.displaySelection = displaySelection
+        self.settings = settings
     }
 
     public func swap() -> SwapOutcome {
@@ -288,7 +291,8 @@ public final class SwapCoordinator {
             )
         }
 
-        guard let (displayA, displayB) = frozenPair(from: currentDisplays) else {
+        let primaryID = resolvedPrimaryDisplayID(in: currentDisplays) ?? 0
+        guard let (displayA, displayB) = frozenPair(from: currentDisplays, primaryDisplayID: primaryID) else {
             lastDiagnostics = .empty
             let now = clock.nowNanoseconds()
             return finishMeasured(
@@ -323,8 +327,6 @@ public final class SwapCoordinator {
         let returning = callReturn && calledWindow != nil
         var newCall: CalledWindow?
         if callReturn {
-            let primaryID = (displays as? any PrimaryDisplayProviding)?.primaryDisplayID()
-                ?? currentDisplays.map(\.id).min() ?? 0
             let pairIDs: Set<UInt32> = [displayA.id, displayB.id]
             let eligible = batch.windows.filter {
                 $0.presentationState.isFullScreen != true && $0.runtimeKey != nil &&
@@ -536,10 +538,8 @@ public final class SwapCoordinator {
 
     /// Selects exactly two displays once per transaction. The returned values
     /// are held locally, so later menu changes cannot reroute in-flight moves.
-    private func frozenPair(from activeDisplays: [DisplaySnapshot]) -> (DisplaySnapshot, DisplaySnapshot)? {
-        let primaryDisplayID = (displays as? any PrimaryDisplayProviding)?.primaryDisplayID()
-            ?? activeDisplays.map(\.id).min()
-            ?? 0
+    private func frozenPair(from activeDisplays: [DisplaySnapshot], primaryDisplayID override: UInt32? = nil) -> (DisplaySnapshot, DisplaySnapshot)? {
+        let primaryDisplayID = override ?? resolvedPrimaryDisplayID(in: activeDisplays) ?? 0
         let candidateCounts: [UInt32: Int]
         if activeDisplays.count > 2 {
             candidateCounts = (windowProvider as? any DisplayCandidateCounting)?
@@ -559,6 +559,14 @@ public final class SwapCoordinator {
             return nil
         }
         return (displayA, displayB)
+    }
+
+    private func resolvedPrimaryDisplayID(in activeDisplays: [DisplaySnapshot]) -> UInt32? {
+        PrimaryDisplaySelection.resolve(
+            preferredDisplayID: settings?.preferredPrimaryDisplayID,
+            systemPrimaryDisplayID: (displays as? any PrimaryDisplayProviding)?.primaryDisplayID(),
+            activeDisplays: activeDisplays
+        )
     }
 
     private func capture(

@@ -31,6 +31,10 @@ private final class FakeAccessibilityClient: AccessibilityClient {
     var sizeWriteHeightAdjustment: CGFloat = 0
     var failingPositionWrites = false
     var failingRaiseActions = false
+    var failingActivationActions = false
+    var requiresActivationBeforeRaise = false
+    var activatedToken: String?
+    var frontmostToken: String?
     var hidesOnDestinationTokens: Set<String> = []
     var hideAnotherOnRaise: String?
     var failingZoomActions = false
@@ -173,12 +177,16 @@ private final class FakeAccessibilityClient: AccessibilityClient {
     func raise(_ window: AccessibilityWindowHandle) throws {
         writeEvents.append("raise:\(window.token)")
         if failingRaiseActions { throw AccessibilityClientError.actionFailed }
+        if requiresActivationBeforeRaise && activatedToken != window.token { throw AccessibilityClientError.actionFailed }
+        frontmostToken = window.token
         hiddenTokens.remove(window.token)
         if let hideAnotherOnRaise { hiddenTokens.insert(hideAnotherOnRaise) }
     }
 
     func activateApplication(for window: AccessibilityWindowHandle) throws {
         writeEvents.append("activate:\(window.token)")
+        if failingActivationActions { throw AccessibilityClientError.actionFailed }
+        activatedToken = window.token
     }
 
     func pressZoom(for window: AccessibilityWindowHandle) throws {
@@ -1874,6 +1882,7 @@ func measuredSwapRecoversExactHiddenWindowAndRechecksOtherWindows(hidesOther: Bo
     #expect(result.outcome == (hidesOther ? .partialFailure(attempted: 2, succeeded: 1, failed: 1)
                                         : .success(attempted: 2, succeeded: 2)))
     #expect(client.writeEvents.filter { $0.hasPrefix("raise:") } == ["raise:stage-left"])
+    #expect(!client.writeEvents.contains { $0.hasPrefix("activate:") })
     #expect(client.attributesByToken[handles[0].token]!.position == CGPoint(x: 1000, y: 0))
 }
 
@@ -1923,7 +1932,68 @@ func callCapturePreservesQuartzStackingAndOriginalAXFrameAcrossApplicationOrder(
     #expect(client.visibleWindowsCallCount == 1)
     #expect(client.writeEvents.isEmpty)
     #expect(service.raise(windowID: batch.windows[1].snapshot.id) == .success)
-    #expect(client.writeEvents == ["raise:top"])
+    #expect(client.writeEvents == ["activate:top", "raise:top"])
     _ = service.captureWindows(displays: serviceDisplays)
     #expect(service.raise(windowID: batch.windows[1].snapshot.id).failure == .staleWindow)
+}
+
+@Test @MainActor
+func callBringsExactWindowAboveMaximizedActiveApplicationAfterMoving() async {
+    let client = FakeAccessibilityClient()
+    let edge = AccessibilityWindowHandle(token: "maximized-edge")
+    let called = AccessibilityWindowHandle(token: "called-window")
+    let sibling = AccessibilityWindowHandle(token: "other-window-in-called-app")
+    client.appValues = [AccessibilityApplication(processIdentifier: 200, bundleIdentifier: "com.microsoft.edgemac"),
+                        AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[200] = [edge]
+    client.handlesByPID[100] = [called, sibling]
+    client.attributesByToken[edge.token] = serviceAttributes(position: .zero, size: serviceDisplays[0].frame.size,
+        presentationState: WindowPresentationState(isZoomed: true, isFullScreen: false))
+    let original = CGRect(x: 1100, y: 100, width: 300, height: 200)
+    client.attributesByToken[called.token] = serviceAttributes(position: original.origin, size: original.size)
+    client.attributesByToken[sibling.token] = serviceAttributes(position: CGPoint(x: 1500, y: 100))
+    client.windowNumbersByToken = [edge.token: 40, called.token: 41, sibling.token: 42]
+    client.frontmostToken = edge.token
+    client.requiresActivationBeforeRaise = true
+    let edgeAttributes = client.attributesByToken[edge.token]
+    let siblingAttributes = client.attributesByToken[sibling.token]
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let coordinator = SwapCoordinator(authorization: TileAuthorizer(), displays: TileDisplays(values: serviceDisplays),
+        windowProvider: service, windowApplying: service, windowRestorer: service, windowVerifier: service)
+
+    #expect(await coordinator.callReturnMeasured().outcome == .success(attempted: 1, succeeded: 1))
+    #expect(client.frontmostToken == called.token && client.activatedToken == called.token)
+    #expect(Array(client.writeEvents.suffix(2)) == ["activate:called-window", "raise:called-window"])
+    #expect(client.writeEvents.dropLast(2).contains { $0.hasPrefix("position:called-window:") })
+    #expect(client.attributesByToken[called.token]?.position == CGPoint(x: 100, y: 100))
+    #expect(client.attributesByToken[edge.token] == edgeAttributes)
+    #expect(client.attributesByToken[sibling.token] == siblingAttributes)
+
+    client.frontmostToken = edge.token
+    #expect(await coordinator.callReturnMeasured().outcome == .success(attempted: 1, succeeded: 1))
+    #expect(client.attributesByToken[called.token]?.position == original.origin)
+    #expect(client.frontmostToken == called.token)
+    #expect(Array(client.writeEvents.suffix(2)) == ["activate:called-window", "raise:called-window"])
+}
+
+@Test @MainActor
+func failedCallActivationReportsFailureAndKeepsReturnRecovery() async {
+    let client = FakeAccessibilityClient()
+    let called = AccessibilityWindowHandle(token: "activation-denied")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100)]
+    client.handlesByPID[100] = [called]
+    client.attributesByToken[called.token] = serviceAttributes(position: CGPoint(x: 1100, y: 100))
+    client.windowNumbersByToken[called.token] = 41
+    client.failingActivationActions = true
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let coordinator = SwapCoordinator(authorization: TileAuthorizer(), displays: TileDisplays(values: serviceDisplays),
+        windowProvider: service, windowApplying: service, windowRestorer: service, windowVerifier: service)
+    #expect(await coordinator.callReturnMeasured().outcome == .partialFailure(attempted: 1, succeeded: 0, failed: 1))
+    #expect(coordinator.hasPendingReturn && !coordinator.calledWindowIsVerified)
+    #expect(client.writeEvents.contains("activate:activation-denied"))
+    #expect(!client.writeEvents.contains("raise:activation-denied"))
+    client.failingActivationActions = false
+    #expect(await coordinator.callReturnMeasured().outcome == .success(attempted: 1, succeeded: 1))
+    #expect(client.attributesByToken[called.token]?.position == CGPoint(x: 1100, y: 100))
+    #expect(!coordinator.hasPendingReturn)
 }

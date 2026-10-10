@@ -33,6 +33,22 @@ public final class ScreenSwapSettings {
     private let moveShortcutKey = "ScreenSwap.moveShortcut"
     private let launchKey = "ScreenSwap.launchAtLogin"
     public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    /// nil follows macOS. Keep a disconnected preference so reconnecting the
+    /// same display restores the user's choice.
+    public var preferredPrimaryDisplayID: UInt32? {
+        get {
+            guard let number = defaults.object(forKey: "ScreenSwap.primaryDisplayID") as? NSNumber,
+                  let id = UInt32(exactly: number.int64Value), id != 0 else { return nil }
+            return id
+        }
+        set {
+            if let newValue, newValue != 0 {
+                defaults.set(NSNumber(value: newValue), forKey: "ScreenSwap.primaryDisplayID")
+            } else {
+                defaults.removeObject(forKey: "ScreenSwap.primaryDisplayID")
+            }
+        }
+    }
     public var shortcut: HotKeyShortcut {
         get { (try? defaults.data(forKey: shortcutKey).flatMap { try JSONDecoder().decode(HotKeyShortcut.self, from: $0) }) ?? .default }
         set { defaults.set(try? JSONEncoder().encode(newValue), forKey: shortcutKey) }

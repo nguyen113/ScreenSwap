@@ -58,7 +58,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
           let displays = try? dependencies.displayProvider.currentDisplays() else {
             return
         }
-        let primaryDisplayID = dependencies.displayProvider.primaryDisplayID()
+        let primaryDisplayID = PrimaryDisplaySelection.resolve(
+            preferredDisplayID: dependencies.settings.preferredPrimaryDisplayID,
+            systemPrimaryDisplayID: dependencies.displayProvider.primaryDisplayID(),
+            activeDisplays: displays
+        ) ?? 0
         dependencies.displayPairSelectionStore.reconcile(
             activeDisplays: displays,
             primaryDisplayID: primaryDisplayID,

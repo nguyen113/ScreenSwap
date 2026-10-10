@@ -47,6 +47,9 @@ public protocol AccessibilityClient: AnyObject {
     func setSize(_ size: CGSize, for window: AccessibilityWindowHandle) throws
     func setPosition(_ position: CGPoint, for window: AccessibilityWindowHandle) throws
     func raise(_ window: AccessibilityWindowHandle) throws
+    /// Explicit user-requested foregrounding for Call/Return. Ordinary swap
+    /// visibility recovery continues to raise without taking application focus.
+    func bringToFront(_ window: AccessibilityWindowHandle) throws
     func activateApplication(for window: AccessibilityWindowHandle) throws
     func setFullScreen(_ isFullScreen: Bool, for window: AccessibilityWindowHandle) throws
     func pressZoom(for window: AccessibilityWindowHandle) throws
@@ -68,6 +71,11 @@ public extension AccessibilityClient {
     /// existing behavior. The live adapter overrides this for native
     /// full-screen Spaces, whose AX controls can reject background actions.
     func activateApplication(for window: AccessibilityWindowHandle) throws {}
+
+    func bringToFront(_ window: AccessibilityWindowHandle) throws {
+        try activateApplication(for: window)
+        try raise(window)
+    }
 
     func setFullScreen(_ isFullScreen: Bool, for window: AccessibilityWindowHandle) throws {
         throw AccessibilityClientError.actionFailed
@@ -247,6 +255,25 @@ public final class LiveAccessibilityClient: AccessibilityClient {
               application.activate(options: []) else {
             throw AccessibilityClientError.actionFailed
         }
+    }
+
+    public func bringToFront(_ window: AccessibilityWindowHandle) throws {
+        guard let element = elements[window.token],
+              let processIdentifier = processIdentifiers[window.token] else {
+            throw AccessibilityClientError.actionFailed
+        }
+        let application = AXUIElementCreateApplication(processIdentifier)
+        // Choose the exact window before activation, which can otherwise bring
+        // a different main window from the same application forward. Some apps
+        // do not expose writable focus attributes; AXRaise remains required.
+        _ = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
+        // AppKit activation is a request on macOS 14+. The explicit AX action
+        // is appropriate here because the user has requested Call/Return.
+        if AXUIElementSetAttributeValue(application, kAXFrontmostAttribute as CFString, kCFBooleanTrue) != .success {
+            try activateApplication(for: window)
+        }
+        _ = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, element)
+        try raise(window)
     }
 
     public func setFullScreen(_ isFullScreen: Bool, for window: AccessibilityWindowHandle) throws {
