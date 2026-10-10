@@ -33,18 +33,18 @@ func contextMenuPersistsClickModeAndNotifiesAppearanceImmediately() {
     let settings = ScreenSwapSettings(defaults: defaults)
     let controller = StatusItemMenuController(settings: settings)
     var changes = 0
-    controller.defaultClickModeChanged = { changes += 1 }
+    controller.modesChanged = { changes += 1 }
     func modeItems() -> [NSMenuItem] {
-        controller.menu.items.first { $0.title == "Default Left Click" }!.submenu!.items
+        controller.menu.items.first { $0.title.hasPrefix("Left Click:") }!.submenu!.items
     }
-    #expect(modeItems().map(\.title) == ["SWAP", "MOVE"])
-    #expect(modeItems().map(\.state) == [.on, .off])
-    controller.perform(NSSelectorFromString("selectDefaultClickMode:"), with: modeItems()[1])
+    #expect(modeItems().map(\.title) == InteractionMode.allCases.map(\.title))
+    #expect(modeItems().map(\.state) == [.on, .off, .off])
+    controller.perform(NSSelectorFromString("changeMode:"), with: modeItems()[1])
     #expect(changes == 1)
     #expect(ScreenSwapSettings(defaults: defaults).defaultClickMode == .move)
-    #expect(modeItems().map(\.state) == [.off, .on])
-    #expect(modeItems()[1].toolTip == "Left-click: MOVE. Middle-click: SWAP.")
-    controller.perform(NSSelectorFromString("selectDefaultClickMode:"), with: modeItems()[0])
+    #expect(modeItems().map(\.state) == [.off, .on, .off])
+    #expect(settings.secondaryMode == .swap)
+    controller.perform(NSSelectorFromString("changeMode:"), with: modeItems()[0])
     #expect(changes == 2)
     #expect(settings.defaultClickMode == .swap)
 }
@@ -95,4 +95,14 @@ func allDirectionalIconsExistOnSupportedMacOS() {
 @MainActor
 private final class ClickModeMenuPresenter: StatusItemMenuPresenting {
     func present(from button: NSStatusBarButton?) {}
+}
+
+
+@Test @MainActor
+func clickRouterReportsConfiguredCallReturnAndIndependentSecondary() {
+    let router = StatusItemClickRouter(menuPresenter: ClickModeMenuPresenter())
+    var commands = 0
+    #expect(router.route(mouseButton: .left, button: nil, primaryMode: .callReturn, secondaryMode: .move) { commands += 1 } == .callReturn)
+    #expect(router.route(mouseButton: .middle, button: nil, primaryMode: .callReturn, secondaryMode: .move) { commands += 1 } == .move)
+    #expect(commands == 2)
 }

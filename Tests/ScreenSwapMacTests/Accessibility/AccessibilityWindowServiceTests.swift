@@ -1898,3 +1898,32 @@ func visibilityRecoveryRequiresCorrectGeometryAndIsBoundedToOneAttempt() {
     #expect(!service.recoverVisibility(for: move, isResizable: true).succeeded)
     #expect(client.writeEvents.filter { $0.hasPrefix("raise:") }.count == 1)
 }
+
+@Test @MainActor
+func callCapturePreservesQuartzStackingAndOriginalAXFrameAcrossApplicationOrder() {
+    let client = FakeAccessibilityClient()
+    let back = AccessibilityWindowHandle(token: "back")
+    let top = AccessibilityWindowHandle(token: "top")
+    client.appValues = [AccessibilityApplication(processIdentifier: 100), AccessibilityApplication(processIdentifier: 200)]
+    client.handlesByPID[100] = [back]
+    client.handlesByPID[200] = [top]
+    client.attributesByToken[back.token] = serviceAttributes(position: CGPoint(x: 1200, y: 100))
+    // Tiled geometry is canonicalized by the existing capture path.
+    let original = CGRect(x: 1001, y: 1, width: 498, height: 798)
+    client.attributesByToken[top.token] = serviceAttributes(position: original.origin, size: original.size)
+    client.visibleWindowValues = [
+        VisibleWindowSnapshot(processIdentifier: 200, frame: original, windowNumber: 8),
+        VisibleWindowSnapshot(processIdentifier: 100, frame: CGRect(x: 1200, y: 100, width: 300, height: 200), windowNumber: 9)
+    ]
+    let service = AccessibilityWindowService(client: client, processIdentifier: 999)
+    let batch = service.captureWindows(displays: serviceDisplays)
+    #expect(batch.windows.map(\.stackingOrder) == [1, 0])
+    #expect(batch.windows[1].originalFrame == original)
+    #expect(batch.windows[1].snapshot.frame != original)
+    #expect(client.visibleWindowsCallCount == 1)
+    #expect(client.writeEvents.isEmpty)
+    #expect(service.raise(windowID: batch.windows[1].snapshot.id) == .success)
+    #expect(client.writeEvents == ["raise:top"])
+    _ = service.captureWindows(displays: serviceDisplays)
+    #expect(service.raise(windowID: batch.windows[1].snapshot.id).failure == .staleWindow)
+}

@@ -496,3 +496,48 @@ private final class StatusFakeTerminator: ScreenSwapTerminating {
         terminateCount += 1
     }
 }
+
+@Test @MainActor
+func contextMenuConfiguresClickModesAndProvidesReturnAndCancel() {
+    let suite = "ScreenSwapTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let settings = ScreenSwapSettings(defaults: defaults)
+    let controller = StatusItemMenuController(settings: settings)
+    var changes = 0
+    var pending = true
+    var calls = 0
+    controller.modesChanged = { changes += 1 }
+    controller.swapAction = {}
+    controller.moveFocusedWindowAction = {}
+    controller.callReturnAction = { calls += 1 }
+    controller.hasPendingReturn = { pending }
+    controller.callReturnTitle = { pending ? "Return Called Window" : "Call Window to Primary Display" }
+    controller.cancelCallReturnAction = { pending = false }
+    controller.rebuildMenu()
+    #expect(!controller.menu.autoenablesItems)
+    let left = controller.menu.items.first { $0.title == "Left Click: Swap" }!
+    let middle = controller.menu.items.first { $0.title == "Middle Click: Move Focused Window" }!
+    #expect(left.submenu?.items.map(\.title) == InteractionMode.allCases.map(\.title))
+    #expect(middle.submenu?.items[1].state == .on)
+    #expect(controller.menu.items.first { $0.title == "Swap Selected Windows" }?.isEnabled == false)
+    #expect(controller.menu.items.first { $0.title == "Move Focused Window to Other Display" }?.isEnabled == false)
+    controller.perform(NSSelectorFromString("changeMode:"), with: middle.submenu!.items[2])
+    #expect(settings.primaryMode == .swap && settings.secondaryMode == .callReturn)
+    #expect(changes == 1)
+    controller.perform(NSSelectorFromString("changeMode:"), with: left.submenu!.items[2])
+    #expect(settings.primaryMode == .callReturn && settings.secondaryMode == .swap)
+    #expect(changes == 2)
+    controller.perform(NSSelectorFromString("callReturnSelected:"), with: nil)
+    #expect(calls == 1)
+    controller.perform(NSSelectorFromString("cancelCallReturnSelected:"), with: nil)
+    #expect(!pending)
+    #expect(controller.menu.items.first { $0.title == "Swap Selected Windows" }?.isEnabled == true)
+    #expect(!controller.menu.items.contains { $0.title.contains("Cancel Return") })
+}
+
+@Test @MainActor
+func statusItemTrackingRespondsToAppKitHoverSelectors() {
+    #expect(StatusBarController.instancesRespond(to: NSSelectorFromString("mouseEntered:")))
+    #expect(StatusBarController.instancesRespond(to: NSSelectorFromString("mouseExited:")))
+}

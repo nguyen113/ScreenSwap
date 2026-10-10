@@ -7,17 +7,19 @@ The import preserves the original artwork bytes. The archive CRC and supplied
 SHA-256 inventory were verified before integration.
 
 - `MenuBar/`, `Motion/`, and `Color/` retain the editable SVG masters, including
-  deferred Call/Return designs.
+  Call/Return designs.
 - `ICON_REQUIREMENTS.md`, `PACK_README.md`, and `Motion.json` are the unchanged
   upstream design contract. References there to previews, Xcode catalogs and
   other exports describe the original archive, not files retained here.
 - `../../Sources/ScreenSwapMac/Resources/StatusIcons` contains the active Swap,
-  Move Left/Right, disabled and unavailable PNG templates and thirteen motion
+  Move Left/Right, Call/Return, disabled and unavailable PNG templates and thirteen motion
   frames at @1x/@2x, plus the blue Swap illustration for About.
 - `../../Packaging/ScreenSwap.icns` is the permanent blue Swap app identity.
 
-Call/Return remains deferred in `../../backlog.yml`; importing its editable
-masters does not enable window operations. App feedback always settles on Swap,
-which remains the left-click action. Vertical moves stay static because this
-pack supplies no vertical arrows. Runtime resources are copied by SwiftPM and
-included by `Packaging/pack-app.sh`; no Xcode asset-catalog compilation is needed.
+Call/Return uses the connected templates and thirteen 220ms motion frames.
+Its @1x/@2x runtime PNGs are direct CairoSVG exports of the retained masters,
+with no runtime or package dependency on CairoSVG. App feedback settles on the
+configured left-click mode; scrolling previews the middle-click mode. Vertical
+and diagonal Move routes retain static native arrows because the pack supplies
+only horizontal Move artwork; unresolved routes use a neutral Move template.
+Runtime resources are copied by SwiftPM and included by `Packaging/pack-app.sh`; no Xcode asset-catalog compilation is needed.

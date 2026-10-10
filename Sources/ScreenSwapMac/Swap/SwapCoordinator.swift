@@ -16,6 +16,22 @@ public final class SwapCoordinator {
     private let selection: (any SwapSelectionProviding)?
     private let displaySelection: DisplayPairSelectionStore
     private var isRunning = false
+    private struct CalledWindow {
+        let key: RuntimeWindowKey
+        let sourceDisplayID: UInt32
+        let primaryDisplayID: UInt32
+        let originalFrame: CGRect
+        var verified: Bool
+    }
+    private var calledWindow: CalledWindow?
+    public var hasPendingReturn: Bool { calledWindow != nil }
+    public var calledWindowIsVerified: Bool { calledWindow?.verified == true }
+
+    /// Forget recovery intent without mutating any window.
+    public func cancelCallReturn() {
+        guard !isRunning else { return }
+        calledWindow = nil
+    }
     public private(set) var lastDiagnostics = SwapDiagnostics.empty
     /// Transaction-local AX handles are deliberately not retained. This is the
     /// latest immutable pre-swap geometry snapshot for a future undo action.
@@ -56,6 +72,7 @@ public final class SwapCoordinator {
     }
 
     public func swap() -> SwapOutcome {
+        guard !hasPendingReturn else { lastDiagnostics = .empty; return .noMoves }
         guard !isRunning else {
             lastDiagnostics = .empty
             return .alreadyRunning
@@ -204,9 +221,14 @@ public final class SwapCoordinator {
         await performMeasured(commandReceivedNanoseconds: commandReceivedNanoseconds, focusedWindowKey: key)
     }
 
+    public func callReturnMeasured(commandReceivedNanoseconds: UInt64? = nil) async -> MeasuredSwapResult {
+        await performMeasured(commandReceivedNanoseconds: commandReceivedNanoseconds, focusedWindowKey: nil, callReturn: true)
+    }
+
     private func performMeasured(
         commandReceivedNanoseconds: UInt64?,
-        focusedWindowKey: RuntimeWindowKey?
+        focusedWindowKey: RuntimeWindowKey?,
+        callReturn: Bool = false
     ) async -> MeasuredSwapResult {
         let t0 = commandReceivedNanoseconds ?? clock.nowNanoseconds()
         guard !isRunning else {
@@ -232,6 +254,14 @@ public final class SwapCoordinator {
                 total: 0, eligible: 0, skipped: 0, skipReasons: [:], attempted: 0, succeeded: 0, failed: 0,
                 verified: false, timedOut: false
             )
+        }
+
+        if hasPendingReturn && !callReturn {
+            lastDiagnostics = .empty
+            let now = clock.nowNanoseconds()
+            return finishMeasured(outcome: .noMoves, t0: t0, t1: now, t2: now, t3: now, t4: now, t5: now,
+                total: 0, eligible: 0, skipped: 0, skipReasons: [:], attempted: 0, succeeded: 0, failed: 0,
+                verified: false, timedOut: false)
         }
 
         let currentDisplays: [DisplaySnapshot]
@@ -284,13 +314,38 @@ public final class SwapCoordinator {
         selection?.reconcile(batch.knownRuntimeKeys)
         let t1 = clock.nowNanoseconds()
         let selectedKeys = selection?.frozenSelectedKeys()
-        let selectedWindows = batch.windows.filter { window in
+        var selectedWindows = batch.windows.filter { window in
             guard window.presentationState.isFullScreen != true else { return false }
             if let focusedWindowKey { return window.runtimeKey == focusedWindowKey }
             guard let selectedKeys else { return true }
             return window.runtimeKey.map { selectedKeys.contains($0) } ?? true
         }
-        if focusedWindowKey == nil && selectedKeys != nil && selectedWindows.isEmpty && batch.windows.contains(where: { $0.presentationState.isFullScreen != true }) {
+        let returning = callReturn && calledWindow != nil
+        var newCall: CalledWindow?
+        if callReturn {
+            let primaryID = (displays as? any PrimaryDisplayProviding)?.primaryDisplayID()
+                ?? currentDisplays.map(\.id).min() ?? 0
+            let pairIDs: Set<UInt32> = [displayA.id, displayB.id]
+            let eligible = batch.windows.filter {
+                $0.presentationState.isFullScreen != true && $0.runtimeKey != nil &&
+                pairIDs.contains($0.snapshot.sourceDisplayID) &&
+                !WindowInventoryClassifier.spans($0.originalFrame, displays: currentDisplays)
+            }
+            if let saved = calledWindow {
+                // A changed pair or disconnected source never reroutes a Return.
+                selectedWindows = pairIDs == Set([saved.sourceDisplayID, saved.primaryDisplayID])
+                    ? eligible.filter { $0.runtimeKey == saved.key } : []
+            } else {
+                selectedWindows = pairIDs.contains(primaryID)
+                    ? Array(eligible.filter { $0.snapshot.sourceDisplayID != primaryID && $0.stackingOrder != nil }
+                        .sorted { $0.stackingOrder! < $1.stackingOrder! }.prefix(1)) : []
+                if let window = selectedWindows.first, let key = window.runtimeKey {
+                    newCall = CalledWindow(key: key, sourceDisplayID: window.snapshot.sourceDisplayID,
+                        primaryDisplayID: primaryID, originalFrame: window.originalFrame, verified: false)
+                }
+            }
+        }
+        if !callReturn && focusedWindowKey == nil && selectedKeys != nil && selectedWindows.isEmpty && batch.windows.contains(where: { $0.presentationState.isFullScreen != true }) {
             let now = clock.nowNanoseconds()
             lastDiagnostics = makeDiagnostics(
                 batch: batch,
@@ -308,8 +363,36 @@ public final class SwapCoordinator {
         }
         let snapshots = selectedWindows.map(\.snapshot)
         let selectedIDs = Set(snapshots.map(\.id))
-        let moves = planner.makeSwapMoves(windows: snapshots, displayA: displayA, displayB: displayB)
-            .filter { selectedIDs.contains($0.windowID) }
+        let moves: [WindowMove]
+        if returning, let saved = calledWindow, let window = selectedWindows.first,
+           let destination = currentDisplays.first(where: { $0.id == saved.sourceDisplayID }) {
+            let frame: CGRect
+            if window.isResizable {
+                frame = WindowMappingEngine().clamp(frame: saved.originalFrame, to: destination.visibleFrame)
+            } else {
+                let size = window.originalFrame.size
+                frame = CGRect(x: min(max(saved.originalFrame.minX, destination.visibleFrame.minX), destination.visibleFrame.maxX - size.width),
+                    y: min(max(saved.originalFrame.minY, destination.visibleFrame.minY), destination.visibleFrame.maxY - size.height),
+                    width: size.width, height: size.height)
+            }
+            // An oversized fixed-size window cannot safely fit after a display change.
+            moves = destination.visibleFrame.contains(frame)
+                ? [WindowMove(windowID: window.snapshot.id, destinationDisplayID: destination.id, frame: frame)] : []
+        } else {
+            moves = planner.makeSwapMoves(windows: snapshots, displayA: displayA, displayB: displayB)
+                .filter { selectedIDs.contains($0.windowID) }
+                .compactMap { move in
+                    guard callReturn, let window = selectedWindows.first, !window.isResizable,
+                          let destination = currentDisplays.first(where: { $0.id == move.destinationDisplayID }) else { return move }
+                    let size = window.originalFrame.size
+                    let visible = destination.visibleFrame
+                    guard size.width <= visible.width, size.height <= visible.height else { return nil }
+                    let frame = CGRect(x: min(max(move.frame.minX, visible.minX), visible.maxX - size.width),
+                        y: min(max(move.frame.minY, visible.minY), visible.maxY - size.height),
+                        width: size.width, height: size.height)
+                    return WindowMove(windowID: move.windowID, destinationDisplayID: move.destinationDisplayID, frame: frame)
+                }
+        }
         let orderedMoves = moves
         let t2 = clock.nowNanoseconds()
         let capabilities = Dictionary(uniqueKeysWithValues: batch.windows.map { ($0.snapshot.id, $0.isResizable) })
@@ -336,6 +419,7 @@ public final class SwapCoordinator {
         }
 
         let t3 = clock.nowNanoseconds()
+        if callReturn, !moves.isEmpty, let newCall { calledWindow = newCall }
         var applyFailedIDs = Set<WindowID>()
         var verifiedCandidates: [(WindowMove, Bool)] = []
         for move in orderedMoves {
@@ -344,6 +428,10 @@ public final class SwapCoordinator {
                 continue
             }
             if windowApplying.apply(move: move, isResizable: isResizable).succeeded {
+                if callReturn, let raising = windowApplying as? any WindowRaising,
+                   !raising.raise(windowID: move.windowID).succeeded {
+                    applyFailedIDs.insert(move.windowID)
+                }
                 verifiedCandidates.append((move, isResizable))
             } else {
                 applyFailedIDs.insert(move.windowID)
@@ -385,6 +473,10 @@ public final class SwapCoordinator {
         }
         let t5 = clock.nowNanoseconds()
         let failedIDs = applyFailedIDs.union(verification.unverifiedIDs)
+        if callReturn, !moves.isEmpty, failedIDs.isEmpty {
+            if returning { calledWindow = nil }
+            else { calledWindow?.verified = true }
+        }
         if focusedWindowKey != nil,
            let move = moves.first, !failedIDs.contains(move.windowID),
            let sourceID = snapshots.first(where: { $0.id == move.windowID })?.sourceDisplayID,

@@ -10,7 +10,7 @@ private struct AccessibilityWindowCandidate {
 }
 
 @MainActor
-public final class AccessibilityWindowService: DisplayPairWindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowBatchVerifying, WindowVisibilityRecovering, WindowInventoryProviding, DisplayCandidateCounting {
+public final class AccessibilityWindowService: DisplayPairWindowProviding, WindowApplying, WindowRestoring, WindowVerifying, WindowBatchVerifying, WindowVisibilityRecovering, WindowInventoryProviding, DisplayCandidateCounting, WindowRaising {
     private static let diagnosticLogger = Logger(subsystem: "com.screenswap.app", category: "diagnostics")
     private let client: any AccessibilityClient
     /// Inventory discovery owns a separate client cache so opening the menu
@@ -410,7 +410,11 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
                         isResizable: isResizable,
                         presentationState: attributes.presentationState,
                         isVisuallyMaximized: isVisuallyMaximized,
-                        runtimeKey: runtimeKey
+                        runtimeKey: runtimeKey,
+                        stackingOrder: visibleWindows.firstIndex(where: {
+                            $0.processIdentifier == application.processIdentifier && $0.windowNumber == visibleWindow?.windowNumber
+                        }),
+                        originalFrame: frame
                     )
                 )
                 nextLookup[id] = handle
@@ -909,6 +913,12 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
             let remaining = max(0, deadline.timeIntervalSinceNow)
             transitionWaiter.wait(for: min(max(0.001, transitionPolicy.pollInterval), remaining))
         }
+    }
+
+    public func raise(windowID: WindowID) -> WindowApplyResult {
+        guard let handle = lookup[windowID] else { return WindowApplyResult(succeeded: false, failure: .staleWindow) }
+        do { try client.raise(handle); return .success }
+        catch { return WindowApplyResult(succeeded: false, failure: .visibility) }
     }
 
     public func recoverVisibility(for move: WindowMove, isResizable: Bool) -> WindowApplyResult {
