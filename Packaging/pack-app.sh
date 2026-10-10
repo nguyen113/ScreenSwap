@@ -156,6 +156,9 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 lipo -create "$ARM_BIN_PATH" "$INTEL_BIN_PATH" -output "$APP_BUNDLE/Contents/MacOS/ScreenSwapApp"
 cp "$INFO_PLIST" "$APP_BUNDLE/Contents/Info.plist"
 cp "$APP_ICON" "$APP_BUNDLE/Contents/Resources/ScreenSwap.icns"
+RESOURCE_BUNDLE="${ARM_BIN_PATH:h}/ScreenSwap_ScreenSwapMac.bundle"
+[[ -d "$RESOURCE_BUNDLE" ]] || fail "missing status icon resource bundle: $RESOURCE_BUNDLE"
+ditto "$RESOURCE_BUNDLE" "$APP_BUNDLE/Contents/Resources/ScreenSwap_ScreenSwapMac.bundle"
 
 if [[ "$MODE" == "production" ]]; then
     echo "Applying Developer ID signature with hardened runtime..."

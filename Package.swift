@@ -31,7 +31,8 @@ let package = Package(
         ),
         .target(
             name: "ScreenSwapMac",
-            dependencies: ["ScreenSwapCore"]
+            dependencies: ["ScreenSwapCore"],
+            resources: [.copy("Resources/StatusIcons")]
         ),
         .executableTarget(
             name: "ScreenSwapApp",
