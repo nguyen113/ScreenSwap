@@ -1,8 +1,8 @@
 # Beta distribution
 
-ScreenSwap's first beta is `0.1.0-beta.1` (build `1`). Its future Git tag is
-`v0.1.0-beta.1`, but this repository does not create tags, releases, or a
-Homebrew tap automatically.
+The current beta is `0.1.0-beta.3` (build `3`), tagged
+`v0.1.0-beta.3`. Tags, releases, and Homebrew tap updates are published
+separately after validation.
 
 ## Current beta path
 
@@ -14,7 +14,7 @@ Packaging/pack-app.sh --beta
 
 The script builds the release executable, constructs `dist/ScreenSwap.app`,
 ad-hoc signs it, verifies its code signature, creates
-`dist/ScreenSwap-0.1.0-beta.1.zip`, and prints the archive's SHA-256. The
+`dist/ScreenSwap-0.1.0-beta.3.zip`, and prints the archive's SHA-256. The
 archive name is derived from `Packaging/release-version.txt`. The app bundle's
 `CFBundleShortVersionString` remains the valid macOS version `0.1.0`; do not
 use it to name distribution artifacts.
@@ -29,13 +29,12 @@ identity, an update may occasionally require Accessibility approval again.
 `spctl --assess` is intentionally not a beta validation gate: rejection is
 expected for an ad-hoc, unnotarized build.
 
-## Future personal Homebrew Cask
+## Personal Homebrew Cask
 
 Once the ZIP has been uploaded to the matching GitHub Release and its final
-SHA-256 is known, a personal tap can use this Cask. It is documentation only;
-do not publish it until the release exists.
+SHA-256 is known, the personal tap can use this Cask.
 
-Once that tap exists, the intended beta installation command is:
+Install from the personal tap with:
 
 ```bash
 brew install --cask nguyen113/tap/screenswap
@@ -43,7 +42,7 @@ brew install --cask nguyen113/tap/screenswap
 
 ```ruby
 cask "screenswap" do
-  version "0.1.0-beta.1"
+  version "0.1.0-beta.3"
   sha256 "<FINAL_SHA256>"
 
   url "https://github.com/nguyen113/ScreenSwap/releases/download/v#{version}/ScreenSwap-#{version}.zip"

@@ -137,7 +137,7 @@ update an existing installation, run `brew upgrade --cask screenswap`.
 ### Option 2: Download from GitHub Releases
 
 1. Download the DMG or ZIP from the
-   [ScreenSwap v0.1.0-beta.2 release](https://github.com/nguyen113/ScreenSwap/releases/tag/v0.1.0-beta.2).
+   [ScreenSwap v0.1.0-beta.3 release](https://github.com/nguyen113/ScreenSwap/releases/tag/v0.1.0-beta.3).
 2. For a ZIP, open it and move the extracted `ScreenSwap.app` to `/Applications`.
    For a DMG, open it and drag ScreenSwap into Applications.
 3. Open ScreenSwap from Applications.
