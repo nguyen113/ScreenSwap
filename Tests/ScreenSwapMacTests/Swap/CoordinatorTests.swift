@@ -302,6 +302,14 @@ func focusedWindowMoveIgnoresSwapCheckboxAndMovesOnlyItsRuntimeKey() async {
     #expect(windows.applied.first?.0.destinationDisplayID == 2)
     #expect(coordinator.latestPreSwapSnapshots.count == 2)
     #expect(!store.isSelected(firstKey))
+    #expect(coordinator.latestFocusedMoveRoute?.source == displays(count: 2)[0])
+    #expect(coordinator.latestFocusedMoveRoute?.destination == displays(count: 2)[1])
+    windows.results = [WindowApplyResult(succeeded: false, failure: .position)]
+    let failed = await coordinator.moveFocusedWindowMeasured(firstKey)
+    #expect(failed.outcome == .partialFailure(attempted: 1, succeeded: 0, failed: 1))
+    #expect(coordinator.latestFocusedMoveRoute == nil)
+    _ = await coordinator.moveFocusedWindowMeasured(RuntimeWindowKey(processIdentifier: 10, quartzWindowNumber: 99))
+    #expect(coordinator.latestFocusedMoveRoute == nil)
 }
 
 @Test
@@ -320,6 +328,7 @@ func focusedWindowMoveRejectsStaleKeyWithoutWrites() async {
 
     #expect(result.outcome == .noMoves)
     #expect(windows.applied.isEmpty)
+    #expect(coordinator.latestFocusedMoveRoute == nil)
 }
 
 @Test

@@ -23,6 +23,9 @@ public final class SwapCoordinator {
     /// Exact runtime identities that completed the latest transaction. This
     /// lets the status menu patch its cached grouping without AX rediscovery.
     public private(set) var latestSuccessfulWindowMoves: [SuccessfulWindowMove] = []
+    /// Frozen geometry for presentation of a verified focused-window move.
+    /// No Accessibility handles or private window metadata are retained.
+    public private(set) var latestFocusedMoveRoute: (source: DisplaySnapshot, destination: DisplaySnapshot)?
 
     public init(
         authorization: any AccessibilityAuthorizing,
@@ -60,6 +63,7 @@ public final class SwapCoordinator {
         isRunning = true
         defer { isRunning = false }
         latestSuccessfulWindowMoves = []
+        latestFocusedMoveRoute = nil
 
         guard authorization.isTrusted else {
             lastDiagnostics = .empty
@@ -217,6 +221,7 @@ public final class SwapCoordinator {
         isRunning = true
         defer { isRunning = false }
         latestSuccessfulWindowMoves = []
+        latestFocusedMoveRoute = nil
 
         guard authorization.isTrusted else {
             lastDiagnostics = .empty
@@ -380,6 +385,13 @@ public final class SwapCoordinator {
         }
         let t5 = clock.nowNanoseconds()
         let failedIDs = applyFailedIDs.union(verification.unverifiedIDs)
+        if focusedWindowKey != nil,
+           let move = moves.first, !failedIDs.contains(move.windowID),
+           let sourceID = snapshots.first(where: { $0.id == move.windowID })?.sourceDisplayID,
+           let source = currentDisplays.first(where: { $0.id == sourceID }),
+           let destination = currentDisplays.first(where: { $0.id == move.destinationDisplayID }) {
+            latestFocusedMoveRoute = (source, destination)
+        }
         latestSuccessfulWindowMoves = successfulWindowMoves(
             batch: batch,
             moves: moves,

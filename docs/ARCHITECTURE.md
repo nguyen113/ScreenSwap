@@ -30,6 +30,29 @@ StatusBarController --> SwapCoordinator --> AccessibilityWindowService
 
 It must not depend on Accessibility APIs or status-bar UI.
 
+## Icon presentation
+
+`IconAnimationController` presents the v3.1.3 Option A templates at 18pt with
+native @1x and @2x representations. SwiftPM copies the PNG resources into
+`ScreenSwap_ScreenSwapMac.bundle`; packaging includes that bundle in
+`Contents/Resources` alongside the permanent blue Swap ICNS. Editable SVG
+masters and the pack's requirements remain in `Design/IconPack`.
+
+Only fully successful nonempty transactions animate: thirteen frames over
+twelve intervals (Swap 200ms; horizontal Move 180ms). Failures, partial results,
+idle and hover remain static. AppKit supplies tint and pressed treatment.
+New actions cancel old playback; Reduce Motion is checked before and during
+playback and observed for immediate cancellation. Presentation never delays AX
+work. The controller serializes status-item commands so a second hotkey or
+middle-click cannot reset in-flight feedback. The coordinator publishes frozen
+source/destination display geometry only for a successful focused move; the UI
+derives direction from that geometry, never display ordering. No vertical
+glyph is supplied, so vertical moves keep the static Swap icon. After feedback,
+the icon returns to Swap because left-click still invokes Swap.
+
+Call/Return is deferred in `backlog.yml`. Its editable artwork is retained but
+no command or recovery state is enabled by importing the icon pack.
+
 ## Swap transaction
 
 1. Validate Accessibility permission.

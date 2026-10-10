@@ -1,0 +1,48 @@
+{
+  "version": "3.1.3",
+  "frames": 13,
+  "sizesPoints": [
+    18,
+    18
+  ],
+  "scales": [
+    1,
+    2
+  ],
+  "amplitudePoints": 0.45,
+  "idleAnimation": false,
+  "reducedMotion": "Skip frames; update the successful final state immediately.",
+  "timing": {
+    "Swap": {
+      "durationMilliseconds": 200,
+      "frameAssetPrefix": "SwapMotion",
+      "settledState": "Swap"
+    },
+    "Move-Right": {
+      "durationMilliseconds": 180,
+      "frameAssetPrefix": "MoveRightMotion",
+      "settledState": "Recompute direction"
+    },
+    "Move-Left": {
+      "durationMilliseconds": 180,
+      "frameAssetPrefix": "MoveLeftMotion",
+      "settledState": "Recompute direction"
+    },
+    "Call": {
+      "durationMilliseconds": 220,
+      "frameAssetPrefix": "CallMotion",
+      "settledState": "Return"
+    },
+    "Return": {
+      "durationMilliseconds": 220,
+      "frameAssetPrefix": "ReturnMotion",
+      "settledState": "Call"
+    }
+  },
+  "design": "Original Option A Window Exchange",
+  "displayIdentity": {
+    "primary": "solid; left pane",
+    "secondary": "dashed; right pane",
+    "stacking": "Call: main upper-left. Return: main lower-left, preserving the preferred mirrored composition."
+  }
+}

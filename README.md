@@ -43,7 +43,7 @@ and macOS Spaces is still important before relying on it in a critical setup.
   its prior frame.
 - Includes a configurable global shortcut (default: Control–Shift–S),
   Accessibility onboarding, optional launch at login, About, and Reduce Motion
-  aware hover feedback.
+  aware action feedback.
 
 ## ⚠️ Important limitation: native macOS full-screen windows
 
@@ -203,6 +203,16 @@ ScreenSwap snapshots eligible windows and plans the complete transaction before
 the first Accessibility write. It rechecks display IDs and geometry before
 mutation, and aborts without moving anything if the display topology changed
 during the operation.
+
+The menu bar uses the Option A window-exchange icon from icon pack v3.1.3.
+The blue Swap artwork is the permanent application icon and appears in About.
+Idle icons stay static; fully successful swaps show 200ms of feedback and
+horizontal focused-window moves show 180ms in their physical direction before
+returning to Swap. Vertical moves retain the static Swap icon. Reduce Motion
+skips animation, including when enabled during playback. Permission and
+insufficient-display failures use a dim icon while keeping help and selection
+accessible. Call/Return is planned in [the backlog](backlog.yml) for a future
+release.
 
 The app intentionally does not implement three-way rotation or general
 N-display routing. Every transaction remains a normal two-display swap.

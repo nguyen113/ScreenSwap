@@ -13,7 +13,33 @@ rules:
   - middle-click actions
   - scroll-wheel actions
   - Windows support
+  - Call/Return mode
 tasks:
+- id: FUTURE-CALL-RETURN-001
+  title: Add Call/Return for one eligible window on the selected display pair
+  group: future
+  status: deferred
+  depends_on: []
+  design_reference: Design/IconPack/ICON_REQUIREMENTS.md
+  allowed_paths:
+  - Sources/ScreenSwapCore/**
+  - Sources/ScreenSwapMac/**
+  - Tests/**
+  - README.md
+  - docs/**
+  acceptance:
+  - Call brings the topmost eligible window from the configured secondary display to the primary visible frame without creating a native full-screen Space; define primary/secondary roles explicitly within the selected pair.
+  - Capture RuntimeWindowKey, owner, stable display ID and original frame before mutation; never retain transaction-local AX handles or identify a window by title.
+  - Return restores that same window to its captured display and frame, regardless of which window is now focused.
+  - Change Call to Return only after verified placement, and Return to Call only after verified restoration; keep recovery information after partial failure.
+  - Handle a closed window, changed geometry and disconnected source display safely; never restore a window off-screen and provide an explicit Cancel/recovery path.
+  - Serialize operations and block conflicting Swap/Move until Return or Cancel, unless explicit conflict-safe transaction handling is implemented.
+  - Reuse the v3.1.3 connected Call/Return templates and thirteen-frame 220ms feedback; primary stays solid, secondary dashed, and Reduce Motion immediately shows the successful settled state.
+  - Preserve current permission, eligibility, topology, verification, best-effort restoration and privacy invariants; other displays remain untouched.
+  - Add deterministic tests for identity, state transitions, failures, disconnects, conflicts, cancellation and Reduce Motion; record physical display/Spaces validation before completion.
+  validation:
+  - ./build-test.sh
+  - git diff --check
 - id: MVP-CORE-001
   title: Add normalized window geometry type and two-display mapping engine skeleton
   group: core

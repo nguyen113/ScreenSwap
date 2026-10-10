@@ -78,10 +78,9 @@ public enum StatusItemInputRoute: Equatable, Sendable {
     case menu
 }
 
-/// Keep the status item discoverable in a crowded macOS menu bar. A lone SF
-/// Symbol is too easily mistaken for one of the system status icons.
+/// The Option A overlapping-window silhouette is the menu-bar identity.
 public enum StatusItemAppearance {
-    public static let title = "Swap"
+    public static let title = ""
 }
 
 /// A local command URL that is handled by the already-authorized status app.
@@ -599,6 +598,9 @@ public final class StatusItemActionHandler {
     public var latestSuccessfulWindowMoves: [SuccessfulWindowMove] {
         coordinator.latestSuccessfulWindowMoves
     }
+    var latestFocusedMoveRoute: (source: DisplaySnapshot, destination: DisplaySnapshot)? {
+        coordinator.latestFocusedMoveRoute
+    }
 
     public init(coordinator: SwapCoordinator, authorization: any AccessibilityAuthorizing) {
         self.coordinator = coordinator
@@ -792,7 +794,11 @@ public final class StatusBarController: NSObject {
     private let feedbackPresenter: any StatusItemFeedbackPresenting
     private let menuController: StatusItemMenuController
     private let clickRouter: StatusItemClickRouter
-    private let iconAnimation = IconAnimationController()
+    private lazy var iconAnimation = IconAnimationController { [weak self] name in
+        self?.statusItem.button?.image = StatusIconImages.image(named: name)
+            ?? StatusIconImages.image(named: "SwapTemplate")
+    }
+    private var operationInFlight = false
     private var menuFocusedWindowKey: RuntimeWindowKey?
     private var middleClickMonitor: MiddleClickMonitor?
 
@@ -836,41 +842,14 @@ public final class StatusBarController: NSObject {
 
     private func configureButton() {
         guard let button = statusItem.button else { return }
-        button.image = NSImage(
-            systemSymbolName: "arrow.left.arrow.right",
-            accessibilityDescription: "Swap windows between displays"
-        )
-        button.image?.isTemplate = true
+        iconAnimation.show(available: authorization.isTrusted)
         button.title = StatusItemAppearance.title
-        button.imagePosition = .imageLeading
+        button.imagePosition = .imageOnly
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = buttonToolTip
-        button.addTrackingArea(NSTrackingArea(rect: button.bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
-    }
-
-    @objc public func mouseEntered(with event: NSEvent) {
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let shouldAnimate = iconAnimation.pointerEntered(reduceMotion: reduced)
-        guard let button = statusItem.button else { return }
-        if reduced {
-            button.contentTintColor = .secondaryLabelColor
-            return
-        }
-        guard shouldAnimate else { return }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
-            button.animator().alphaValue = 0.55
-        } completionHandler: { [weak button] in
-            Task { @MainActor in button?.alphaValue = 1 }
-        }
-    }
-
-    @objc public func mouseExited(with event: NSEvent) {
-        iconAnimation.pointerExited()
-        statusItem.button?.alphaValue = 1
-        statusItem.button?.contentTintColor = nil
+        button.setAccessibilityLabel("ScreenSwap: swap windows between displays")
     }
 
     @objc
@@ -920,7 +899,9 @@ public final class StatusBarController: NSObject {
     }
 
     private func performMove(key: RuntimeWindowKey?) {
+        guard !operationInFlight else { return }
         guard authorization.isTrusted else {
+            iconAnimation.show(available: false)
             authorization.requestAccess()
             feedbackPresenter.present(StatusItemFeedbackCatalog.feedback(for: .noPermission), from: statusItem.button)
             return
@@ -933,15 +914,27 @@ public final class StatusBarController: NSObject {
             return
         }
         let commandReceived = actionHandler.commandReceivedNanoseconds()
+        operationInFlight = true
         statusItem.button?.isEnabled = false
-        iconAnimation.beganSwap()
+        iconAnimation.show()
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await actionHandler.handleMeasuredMove(key, commandReceivedNanoseconds: commandReceived)
             feedbackPresenter.present(actionHandler.feedback, from: statusItem.button)
             statusItem.button?.toolTip = buttonToolTip
             statusItem.button?.isEnabled = actionHandler.isEnabled
-            iconAnimation.endedSwap()
+            operationInFlight = false
+            if let route = actionHandler.latestFocusedMoveRoute {
+                statusItem.button?.toolTip = buttonToolTip + "\nMoved from \(displayName(for: route.source.id)) to \(displayName(for: route.destination.id))."
+            }
+            if let route = actionHandler.latestFocusedMoveRoute,
+               let mode = StatusIconMode.move(from: route.source, to: route.destination) {
+                iconAnimation.completed(mode, outcome: outcome)
+            } else {
+                // Vertical moves have no supplied motion glyph. Still render
+                // permission/display failures using a clickable dim template.
+                iconAnimation.settle(after: outcome)
+            }
             if StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: outcome) {
                 clickRouter.applySuccessfulMoves(actionHandler.latestSuccessfulWindowMoves)
                 clickRouter.markMenuInventoryStale()
@@ -949,17 +942,26 @@ public final class StatusBarController: NSObject {
         }
     }
 
+    private func displayName(for id: UInt32) -> String {
+        NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id
+        }?.localizedName ?? "Display \(id)"
+    }
+
     private func performLeftClick() {
+        guard !operationInFlight else { return }
         let commandReceived = actionHandler.commandReceivedNanoseconds()
+        operationInFlight = true
         statusItem.button?.isEnabled = false
-        iconAnimation.beganSwap()
+        iconAnimation.show()
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await actionHandler.handleMeasuredClick(commandReceivedNanoseconds: commandReceived)
             feedbackPresenter.present(actionHandler.feedback, from: statusItem.button)
             statusItem.button?.toolTip = buttonToolTip
             statusItem.button?.isEnabled = actionHandler.isEnabled
-            iconAnimation.endedSwap()
+            operationInFlight = false
+            iconAnimation.completed(.swap, outcome: outcome)
             if StatusItemMenuInventoryRefreshPolicy.shouldMarkStale(after: outcome) {
                 // Do not perform a synchronous AX inventory crawl after a
                 // swap. It would block the main actor just as the UI becomes
