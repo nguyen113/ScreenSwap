@@ -33,8 +33,8 @@ and macOS Spaces is still important before relying on it in a critical setup.
 - Lets you include or exclude individual windows, or use an `All windows` row
   for each selected display.
 - Moves the focused window to the other selected display with a separate
-  configurable shortcut (Control–Option–Shift–S by default), a middle-click on
-  the menu-bar icon, or a menu command.
+  configurable shortcut (Control–Option–Shift–S by default), the secondary
+  mouse action when SWAP is the default, or a menu command.
 - Preserves proportional placement across displays with different resolutions,
   aspect ratios, and usable areas.
 - Protects spanning, minimized, transient, non-movable, and off-screen windows.
@@ -184,8 +184,17 @@ app if macOS asks you to. Beta updates may require approval again.
    move. Window choices are retained while a display is outside the active pair.
 5. Left-click the menu-bar item or press Control–Shift–S to swap the selected
    windows between the active pair.
-6. To move only the focused window, middle-click the ScreenSwap menu-bar icon
-   or press Control–Option–Shift–S. You can also focus the window, then
+6. Right-click and choose **Default Left Click → SWAP / MOVE** to change the
+   mouse default. Middle-click always performs the other mode. The choice is
+   saved across launches. **MOVE** moves only the frontmost focused window;
+   **SWAP** swaps the checked windows.
+7. The menu-bar label changes to **SWAP** with two-way arrows or **MOVE** with
+   one arrow pointing toward the destination display. The MOVE arrow updates
+   as focus, window position, or display arrangement changes. When no direction
+   can be resolved, it shows a neutral right-pointing arrow; the move still
+   requires an eligible focused window on the selected pair.
+8. Press Control–Option–Shift–S to move only the focused window. You can also
+   focus the window, then
    right-click ScreenSwap and choose **Move Focused Window to Other Display**.
    Set either keyboard shortcut in Settings.
 
@@ -205,7 +214,8 @@ mutation, and aborts without moving anything if the display topology changed
 during the operation.
 
 The app intentionally does not implement three-way rotation or general
-N-display routing. Every transaction remains a normal two-display swap.
+N-display routing. Every transaction operates on the selected display pair, using either a
+layout swap or a focused-window move.
 
 macOS does not provide a reliable public API for moving arbitrary foreign-app
 windows between Spaces. ScreenSwap therefore leaves native full-screen Spaces

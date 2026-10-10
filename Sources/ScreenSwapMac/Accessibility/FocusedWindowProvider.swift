@@ -5,6 +5,11 @@ import CoreGraphics
 @MainActor
 public protocol FocusedWindowProviding: AnyObject {
     func focusedWindowKey() -> RuntimeWindowKey?
+    func focusedWindowFrame() -> CGRect?
+}
+
+public extension FocusedWindowProviding {
+    func focusedWindowFrame() -> CGRect? { nil }
 }
 
 enum FocusedWindowKeyResolver {
@@ -35,26 +40,34 @@ public final class LiveFocusedWindowProvider: FocusedWindowProviding {
     }
 
     public func focusedWindowKey() -> RuntimeWindowKey? {
+        guard let focused = focusedWindowGeometry(),
+              let visible = try? client.visibleWindows() else { return nil }
+        return FocusedWindowKeyResolver.resolve(
+            processIdentifier: focused.processIdentifier,
+            frame: focused.frame,
+            visibleWindows: visible
+        )
+    }
+
+    /// Icon updates need only focused geometry, without an inventory crawl.
+    public func focusedWindowFrame() -> CGRect? { focusedWindowGeometry(timeout: 0.05)?.frame }
+
+    private func focusedWindowGeometry(timeout: Float = 0.5) -> (processIdentifier: Int32, frame: CGRect)? {
         guard authorization.isTrusted else { return nil }
         guard let frontmost = NSWorkspace.shared.frontmostApplication,
               frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return nil }
         let application = AXUIElementCreateApplication(frontmost.processIdentifier)
-        AXUIElementSetMessagingTimeout(application, 0.5)
+        AXUIElementSetMessagingTimeout(application, timeout)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &value) == .success,
               let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         let window = value as! AXUIElement
-        AXUIElementSetMessagingTimeout(window, 0.5)
+        AXUIElementSetMessagingTimeout(window, timeout)
         var processIdentifier: pid_t = 0
         guard AXUIElementGetPid(window, &processIdentifier) == .success,
               let position = point(kAXPositionAttribute as CFString, from: window),
-              let size = size(kAXSizeAttribute as CFString, from: window),
-              let visible = try? client.visibleWindows() else { return nil }
-        return FocusedWindowKeyResolver.resolve(
-            processIdentifier: processIdentifier,
-            frame: CGRect(origin: position, size: size),
-            visibleWindows: visible
-        )
+              let size = size(kAXSizeAttribute as CFString, from: window) else { return nil }
+        return (processIdentifier, CGRect(origin: position, size: size))
     }
 
     private func point(_ attribute: CFString, from element: AXUIElement) -> CGPoint? {

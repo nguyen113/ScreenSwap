@@ -81,3 +81,19 @@ the focused key at mouse-down before routing through the same targeted move.
 particular, a non-resizable window keeps its actual captured size; only its
 planner-selected origin is clamped within the destination visible frame. The
 pure mapping engine remains unaware of AX capabilities.
+
+## Default mouse action and icon
+
+`ScreenSwapSettings.defaultClickMode` persists SWAP (the default) or MOVE.
+The context menu changes this setting and immediately updates the status item.
+Left-click invokes the chosen mode; the existing middle-click monitor invokes
+the other mode, retaining focus captured at mouse-down. Explicit command URLs
+and the two global shortcuts keep their named actions.
+
+MOVE continues through the existing focused-runtime-key transaction and ignores
+SWAP checkboxes. A lightweight, permission-gated focus geometry read updates its
+single arrow once per second, on hover, and after a transaction. It does not
+crawl the menu inventory or retain Accessibility handles. `MoveArrowDirection`
+uses Quartz geometry and stable selected display IDs for horizontal, vertical,
+and diagonal directions. An unresolved direction uses `arrow.right`; execution
+still validates eligibility and topology. SWAP uses bidirectional arrows.

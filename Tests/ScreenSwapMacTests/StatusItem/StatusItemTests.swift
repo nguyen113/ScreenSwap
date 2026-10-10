@@ -6,7 +6,7 @@ import Testing
 
 @Test
 func statusItemUsesExplicitSwapLabel() {
-    #expect(StatusItemAppearance.title == "Swap")
+    #expect(StatusItemAppearance.title == "SWAP")
 }
 
 @Test
