@@ -66,19 +66,26 @@ public struct CapturedWindow: Equatable, Sendable {
     /// visible frame. It must fill the destination visible frame after swap.
     public let isVisuallyMaximized: Bool
     public let runtimeKey: RuntimeWindowKey?
+    /// Quartz front-to-back order from this capture; lower values are on top.
+    public let stackingOrder: Int?
+    public let originalFrame: CGRect
 
     public init(
         snapshot: WindowSnapshot,
         isResizable: Bool,
         presentationState: WindowPresentationState = .unknown,
         isVisuallyMaximized: Bool = false,
-        runtimeKey: RuntimeWindowKey? = nil
+        runtimeKey: RuntimeWindowKey? = nil,
+        stackingOrder: Int? = nil,
+        originalFrame: CGRect? = nil
     ) {
         self.snapshot = snapshot
         self.isResizable = isResizable
         self.presentationState = presentationState
         self.isVisuallyMaximized = isVisuallyMaximized
         self.runtimeKey = runtimeKey
+        self.stackingOrder = stackingOrder
+        self.originalFrame = originalFrame ?? snapshot.frame
     }
 }
 
@@ -288,6 +295,11 @@ public protocol DisplayCandidateCounting: AnyObject {
 public protocol WindowApplying: AnyObject {
     @MainActor
     func apply(move: WindowMove, isResizable: Bool) -> WindowApplyResult
+}
+
+@MainActor
+public protocol WindowRaising: AnyObject {
+    func raise(windowID: WindowID) -> WindowApplyResult
 }
 
 /// Restores a captured window after a completed AX write cannot be verified

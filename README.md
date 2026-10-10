@@ -33,8 +33,12 @@ and macOS Spaces is still important before relying on it in a critical setup.
 - Lets you include or exclude individual windows, or use an `All windows` row
   for each selected display.
 - Moves the focused window to the other selected display with a separate
-  configurable shortcut (Control–Option–Shift–S by default), the secondary
-  mouse action when SWAP is the default, or a menu command.
+  configurable shortcut (Control–Option–Shift–S by default), a middle-click on
+  the menu-bar icon by default, or a menu command.
+- Calls the topmost eligible window from the other selected display to the
+  primary display and returns that same window with Control–Shift–C.
+- Lets you bind Swap, Move, or Call / Return to left and middle click; scroll
+  over the icon to cycle the middle-click mode.
 - Preserves proportional placement across displays with different resolutions,
   aspect ratios, and usable areas.
 - Protects spanning, minimized, transient, non-movable, and off-screen windows.
@@ -182,25 +186,38 @@ app if macOS asks you to. Beta updates may require approval again.
    unchecked display to replace a member of the pair.
 4. Use the `All windows` row or individual window rows to choose which windows
    move. Window choices are retained while a display is outside the active pair.
-5. Left-click the menu-bar item or press Control–Shift–S to swap the selected
+5. With the default click bindings, left-click the menu-bar item or press
+   Control–Shift–S to swap the selected
    windows between the active pair.
-6. Right-click and choose **Default Left Click → SWAP / MOVE** to change the
-   mouse default. Middle-click always performs the other mode. The choice is
-   saved across launches. **MOVE** moves only the frontmost focused window;
-   **SWAP** swaps the checked windows.
-7. The menu-bar icon changes to **SWAP** with two-way arrows or **MOVE** with
-   one arrow pointing toward the destination display. The MOVE arrow updates
-   as focus, window position, or display arrangement changes. When no direction
-   can be resolved, it shows a neutral right-pointing arrow; the move still
-   requires an eligible focused window on the selected pair.
-8. Press Control–Option–Shift–S to move only the focused window. You can also
-   focus the window, then
+6. To move only the focused window, middle-click the ScreenSwap menu-bar icon
+   or press Control–Option–Shift–S. You can also focus the window, then
    right-click ScreenSwap and choose **Move Focused Window to Other Display**.
-   Set either keyboard shortcut in Settings.
+7. Press Control–Shift–C or choose **Call Window to Primary Display** to bring
+   the topmost eligible window from the other selected display to the primary.
+   Press the same shortcut again to return that window to its saved display,
+   position and size, even if you have focused or resized another window.
+8. In the right-click menu, choose **Left Click** and **Middle Click** to bind
+   each to Swap, Move Focused Window, or Call / Return. Choosing the other
+   button's mode exchanges their bindings. Scroll over the icon to cycle the
+   middle-click binding between the two modes different from left click.
+   The icon previews the new middle-click mode until the pointer leaves.
+9. Change any of the three shortcuts in **Settings…**. Shortcuts always invoke
+   their named actions, independently of the mouse bindings.
 
-The focused-window command works independently of the swap checkboxes. It
+The focused-window and Call / Return commands work independently of the swap checkboxes. It
 moves an eligible window between the two selected displays; windows on other
-displays are left in place.
+displays are left in place. Call / Return requires the system primary display
+and one other display in the selected pair. Call uses proportional placement
+and raises the window; Return restores the saved geometry, clamping it to the
+source's usable area if the display geometry has changed.
+
+While a Return is pending, return the window or choose **Cancel Return — Keep
+Window Here** before using Swap or Move. Cancel forgets the saved Return and
+leaves the window in place. If placement fails, recovery stays available for a
+retry. A closed, hidden, minimized, full-screen or unavailable window, or a
+changed pair/disconnected source, cannot redirect Return to a different window.
+Make the window available and reselect the original pair, or cancel. Return
+state lives in memory and is forgotten when ScreenSwap quits.
 
 Display checkmarks choose *which monitors participate*. The nested window
 checkmarks choose *which windows participate*. A window on an unselected
@@ -216,19 +233,18 @@ during the operation.
 The menu bar uses the Option A window-exchange icon from icon pack v3.1.3.
 The blue Swap artwork is the permanent application icon and appears in About.
 Idle icons stay static; fully successful swaps show 200ms of feedback and
-horizontal focused-window moves show 180ms in their physical direction before
-returning to the configured default icon. Vertical and diagonal MOVE directions
-use a static native arrow because the pack supplies only horizontal MOVE art.
-The item remains icon-only; its tooltip and Accessibility label identify the
-configured actions. Reduce Motion
+horizontal focused-window moves show 180ms in their physical direction.
+Call and Return use the supplied connected icons with 220ms feedback.
+The idle icon reflects the configured left-click mode; scroll previews the
+middle-click mode. Move continues to track the focused window's physical destination. Vertical
+and diagonal directions use static native arrows; unavailable routes use the
+neutral right-pointing Move template. Reduce Motion
 skips animation, including when enabled during playback. Permission and
 insufficient-display failures use a dim icon while keeping help and selection
-accessible. Call/Return is planned in [the backlog](backlog.yml) for a future
-release.
+accessible.
 
 The app intentionally does not implement three-way rotation or general
-N-display routing. Every transaction operates on the selected display pair,
-using either a layout swap or a focused-window move.
+N-display routing. Every transaction operates on exactly two selected displays.
 
 macOS does not provide a reliable public API for moving arbitrary foreign-app
 windows between Spaces. ScreenSwap therefore leaves native full-screen Spaces

@@ -19,7 +19,7 @@ StatusBarController --> SwapCoordinator --> AccessibilityWindowService
        |                       +--> WindowSelectionStore + WindowMappingEngine
        |
        +--> LiveStatusItemInventoryProvider --> read-only AX/Quartz inventory
-       +--> GlobalHotKeyService --> swap / focused-window move
+       +--> GlobalHotKeyService --> swap / focused-window move / Call-Return
        +--> FocusedWindowProvider --> targeted move through SwapCoordinator
        +--> Settings / About windows
 ```
@@ -39,22 +39,50 @@ native @1x and @2x representations. SwiftPM copies the PNG resources into
 masters and the pack's requirements remain in `Design/IconPack`.
 
 Only fully successful nonempty transactions animate: thirteen frames over
-twelve intervals (Swap 200ms; horizontal Move 180ms). Failures, partial results,
-idle and hover remain static. AppKit supplies tint and pressed treatment.
+twelve intervals (Swap 200ms; horizontal Move 180ms; Call/Return 220ms).
+Failures, partial results, idle and hover remain static. AppKit supplies tint and pressed treatment.
 New actions cancel old playback; Reduce Motion is checked before and during
 playback and observed for immediate cancellation. Presentation never delays AX
 work. The controller serializes status-item commands so a second hotkey or
 middle-click cannot reset in-flight feedback. The coordinator publishes frozen
 source/destination display geometry only for a successful focused move; the UI
-derives direction from that geometry, never display ordering. No vertical or
-diagonal motion glyph is supplied, so those moves use static native arrows.
-After feedback, the icon returns to the configured default and recomputes MOVE
-direction from the current focused window. Appearance polling skips in-flight
-transactions and animation playback. A completion/cancellation callback updates
-the resting icon immediately, including after Reduce Motion cancels playback.
+derives direction from that geometry, never display ordering. The pack supplies
+horizontal Move motion only; vertical/diagonal routes retain static native
+arrows. After feedback the icon settles on the configured left-click mode.
+Scrolling previews the secondary binding until pointer exit. Move retains the
+existing permission-gated focused geometry read and one-second appearance
+polling, skipping transactions and animation. Unknown routes use the neutral
+right-pointing Move template. Animation completion and Reduce Motion
+cancellation recompute the current resting icon.
 
-Call/Return is deferred in `backlog.yml`. Its editable artwork is retained but
-no command or recovery state is enabled by importing the icon pack.
+`ScreenSwapSettings` persists distinct left/middle bindings and three
+independent shortcuts. Existing `ScreenSwap.defaultClickMode` preferences are
+used when the new primary binding has not yet been saved, preserving a prior
+Move/Swap selection on upgrade. Selecting the other button's mode exchanges
+bindings.
+Scroll cycles only modes different from left click. A trackpad gesture cycles
+once and momentum is ignored; wheel events are debounced. Context-menu rebuilds
+render cached inventory only. Native menu auto-enabling is disabled so explicit
+availability and pending-Return restrictions are respected.
+
+Call / Return uses the same measured transaction pipeline. Capture includes
+Quartz front-to-back order and the original AX frame before normalization.
+Call chooses the topmost eligible runtime window on the other selected display,
+requires the system primary display in the pair, maps into its visible frame,
+and raises the fresh AX handle before verification. It ignores swap checkboxes,
+as does focused Move. Native full-screen and spanning windows remain excluded.
+
+The coordinator keeps only a runtime key, source/primary display IDs, original
+frame and verification flag between Call and Return. Return recaptures all
+windows and resolves that same runtime key to a fresh transaction-local AX ID,
+then restores the original geometry. Changed display geometry is clamped to
+the source visible area; oversized fixed-size windows cannot be restored there.
+A changed pair, disconnected source or unavailable window produces no writes.
+Failed writes or verification retain recovery intent. Only verified Call shows
+the Return icon; failed Call offers Retry Return / Recover from the menu.
+Verified Return clears the saved state. Swap/Move are blocked until Return or
+Cancel, and Cancel drops state without a window mutation. Recovery is deliberately
+process-local, so quitting forgets it.
 
 ## Swap transaction
 
@@ -101,28 +129,11 @@ The menu freezes the focused key when it opens so clicking its command cannot
 retarget another window.
 The status item also observes middle-button down/up events locally and globally.
 It accepts a click only when button 2 starts and ends over the icon, freezing
-the focused key at mouse-down before routing through the same targeted move.
+the focused key at mouse-down before routing the configured middle-click mode.
+Left click routes its configured primary mode; keyboard shortcuts and command
+URLs retain their named action regardless of those bindings.
 
 `AccessibilityWindowService` owns OS-specific capability decisions. In
 particular, a non-resizable window keeps its actual captured size; only its
 planner-selected origin is clamped within the destination visible frame. The
 pure mapping engine remains unaware of AX capabilities.
-
-## Default mouse action and icon
-
-`ScreenSwapSettings.defaultClickMode` persists SWAP (the default) or MOVE.
-The context menu changes this setting and immediately updates the status item.
-Left-click invokes the chosen mode; the existing middle-click monitor invokes
-the other mode, retaining focus captured at mouse-down. Explicit command URLs
-and the two global shortcuts keep their named actions.
-
-MOVE continues through the existing focused-runtime-key transaction and ignores
-SWAP checkboxes. A lightweight, permission-gated focus geometry read updates its
-single arrow once per second, on hover, and after a transaction. It does not
-crawl the menu inventory or retain Accessibility handles. `MoveArrowDirection`
-uses Quartz geometry and stable selected display IDs for horizontal, vertical,
-and diagonal directions. SWAP and horizontal MOVE use the imported templates;
-other MOVE directions use static SF Symbols. An unresolved direction uses the
-right-pointing MOVE template; execution still validates eligibility and topology.
-The status item stays icon-only, with actions described in its tooltip and
-Accessibility label.

@@ -5,16 +5,18 @@ import Foundation
 public protocol GlobalHotKeyServicing: AnyObject {
     func register(_ shortcut: HotKeyShortcut, action: @escaping @MainActor () -> Void) -> Bool
     func registerMove(_ shortcut: HotKeyShortcut, action: @escaping @MainActor () -> Void) -> Bool
+    func registerCallReturn(_ shortcut: HotKeyShortcut, action: @escaping @MainActor () -> Void) -> Bool
     func unregister()
 }
 
 private enum HotKeyCommand: UInt32 {
     case swap = 1
     case move = 2
+    case callReturn = 3
 }
 
 /// Public Carbon registration is used because AppKit has no global shortcut
-/// API. One handler dispatches two independent commands by hot-key ID.
+/// API. One handler dispatches independent commands by hot-key ID.
 @MainActor
 public final class GlobalHotKeyService: GlobalHotKeyServicing {
     private var hotKeys: [UInt32: EventHotKeyRef] = [:]
@@ -29,6 +31,10 @@ public final class GlobalHotKeyService: GlobalHotKeyServicing {
 
     public func registerMove(_ shortcut: HotKeyShortcut, action: @escaping @MainActor () -> Void) -> Bool {
         register(shortcut, command: .move, action: action)
+    }
+
+    public func registerCallReturn(_ shortcut: HotKeyShortcut, action: @escaping @MainActor () -> Void) -> Bool {
+        register(shortcut, command: .callReturn, action: action)
     }
 
     private func register(_ shortcut: HotKeyShortcut, command: HotKeyCommand, action: @escaping @MainActor () -> Void) -> Bool {

@@ -20,6 +20,10 @@ public struct HotKeyShortcut: Codable, Equatable, Sendable {
         keyCode: 1,
         modifiers: UInt32(controlKey | optionKey | shiftKey)
     ) // ⌃⌥⇧S
+    public static let defaultCallReturn = HotKeyShortcut(
+        keyCode: 8,
+        modifiers: UInt32(controlKey | shiftKey)
+    ) // ⌃⇧C
 }
 
 @MainActor
@@ -28,7 +32,6 @@ public final class ScreenSwapSettings {
     private let shortcutKey = "ScreenSwap.shortcut"
     private let moveShortcutKey = "ScreenSwap.moveShortcut"
     private let launchKey = "ScreenSwap.launchAtLogin"
-    private let clickModeKey = "ScreenSwap.defaultClickMode"
     public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
     public var shortcut: HotKeyShortcut {
         get { (try? defaults.data(forKey: shortcutKey).flatMap { try JSONDecoder().decode(HotKeyShortcut.self, from: $0) }) ?? .default }
@@ -42,8 +45,42 @@ public final class ScreenSwapSettings {
         get { defaults.bool(forKey: launchKey) }
         set { defaults.set(newValue, forKey: launchKey) }
     }
+    public var callReturnShortcut: HotKeyShortcut {
+        get { (try? defaults.data(forKey: "ScreenSwap.callReturnShortcut").flatMap { try JSONDecoder().decode(HotKeyShortcut.self, from: $0) }) ?? .defaultCallReturn }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: "ScreenSwap.callReturnShortcut") }
+    }
+    /// Compatibility with the existing two-mode setting; new UI uses primaryMode.
     public var defaultClickMode: WindowActionMode {
-        get { defaults.string(forKey: clickModeKey).flatMap(WindowActionMode.init(rawValue:)) ?? .swap }
-        set { defaults.set(newValue.rawValue, forKey: clickModeKey) }
+        get { primaryMode == .move ? .move : .swap }
+        set { primaryMode = newValue == .move ? .move : .swap }
+    }
+    public var primaryMode: InteractionMode {
+        get {
+            defaults.string(forKey: "ScreenSwap.primaryMode").flatMap(InteractionMode.init(rawValue:))
+                ?? defaults.string(forKey: "ScreenSwap.defaultClickMode").flatMap(InteractionMode.init(rawValue:))
+                ?? .swap
+        }
+        set {
+            let old = primaryMode
+            if newValue == secondaryMode { defaults.set(old.rawValue, forKey: "ScreenSwap.secondaryMode") }
+            defaults.set(newValue.rawValue, forKey: "ScreenSwap.primaryMode")
+        }
+    }
+    public var secondaryMode: InteractionMode {
+        get {
+            let saved = defaults.string(forKey: "ScreenSwap.secondaryMode").flatMap(InteractionMode.init(rawValue:))
+                ?? (primaryMode == .move ? .swap : .move)
+            return saved == primaryMode ? (InteractionMode.allCases.first { $0 != primaryMode }!) : saved
+        }
+        set {
+            let old = secondaryMode
+            if newValue == primaryMode { defaults.set(old.rawValue, forKey: "ScreenSwap.primaryMode") }
+            defaults.set(newValue.rawValue, forKey: "ScreenSwap.secondaryMode")
+        }
+    }
+    public func cycleSecondaryMode(forward: Bool) {
+        let modes = InteractionMode.allCases.filter { $0 != primaryMode }
+        let index = modes.firstIndex(of: secondaryMode) ?? 0
+        secondaryMode = modes[(index + (forward ? 1 : modes.count - 1)) % modes.count]
     }
 }

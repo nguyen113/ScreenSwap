@@ -3,8 +3,15 @@ import ScreenSwapCore
 
 enum StatusIconMode: String, CaseIterable {
     case swap = "Swap", moveLeft = "MoveLeft", moveRight = "MoveRight"
+    case call = "Call", `return` = "Return"
 
-    var duration: Duration { self == .swap ? .milliseconds(200) : .milliseconds(180) }
+    var duration: Duration {
+        switch self {
+        case .swap: .milliseconds(200)
+        case .moveLeft, .moveRight: .milliseconds(180)
+        case .call, .return: .milliseconds(220)
+        }
+    }
     var templateName: String { rawValue + "Template" }
 
     /// The pack has no vertical glyph. Avoid a misleading horizontal arrow.

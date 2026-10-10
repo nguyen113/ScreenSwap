@@ -1,36 +1,41 @@
 # Product
 
-## Problem
+ScreenSwap is a macOS 14+ menu-bar utility for moving eligible windows between
+exactly two selected active displays. On a Mac with three or more displays,
+users choose the active pair; other displays remain untouched.
 
-People using a preferred larger display plus a smaller secondary display often keep their active work on one screen and progress/status information on the other. Changing focus means manually moving several windows.
+## Actions
 
-## MVP promise
+- **Swap:** exchange the selected windows, preserving proportional layouts.
+  Default shortcut: Control–Shift–S.
+- **Move Focused Window:** move one focused eligible window to the other
+  selected display, independently of swap checkboxes.
+  Default shortcut: Control–Option–Shift–S.
+- **Call / Return:** bring the topmost eligible window from the other selected
+  display to the system primary display. Invoke again to restore that same
+  window's saved display and geometry. Default shortcut: Control–Shift–C.
 
-One click or one global shortcut swaps the eligible window layouts between exactly two active displays.
+Left click defaults to Swap and middle click to Move. The right-click menu
+configures both bindings. They remain distinct; scrolling over the icon cycles
+middle click between the two remaining modes and previews its icon. Keyboard
+shortcuts are configurable in Settings and stay tied to their named actions.
 
-The layout should feel preserved even when the displays differ in resolution or aspect ratio.
+A pending Return blocks Swap and Move until Return or Cancel. Cancel keeps the
+window where it is and forgets recovery intent. Failed placement retains retry
+state; a missing window, changed pair or disconnected source cannot retarget
+Return. Return state is kept in memory for the current app session.
 
-## MVP
+## Supported behavior
 
-- macOS
-- exactly 2 active displays
-- menu-bar utility
-- left click -> swap
-- global shortcut -> swap
-- proportional position/size preservation
-- Accessibility permission onboarding
-- short hover animation representing the swap
-- graceful message when display count is not exactly 2
+Accessibility onboarding, per-window selection, launch at login, About/support
+links and Reduce Motion-aware feedback accompany the window actions. Movable
+fixed-size windows receive position writes only. Native full-screen Spaces,
+spanning, minimized, transient and unavailable windows are excluded.
 
-## Deferred
+Idle and hover icons are static. Fully successful actions animate using the
+supplied icon pack; Reduce Motion skips or cancels playback immediately.
 
-- 3+ monitors
-- right click
-- middle click
-- scroll-wheel interactions
-- display locking
-- Windows
+## Outside current scope
 
-## Spanning windows
-
-A window that has positive-area overlap with both displays is left in place during a swap. ScreenSwap does not move or resize it.
+General N-display rotation, persistent recovery across app restarts, display
+locking and Windows support.

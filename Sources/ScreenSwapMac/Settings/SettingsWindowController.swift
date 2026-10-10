@@ -10,7 +10,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         settings: ScreenSwapSettings,
         authorization: any AccessibilityAuthorizing,
         shortcutRegistration: ((HotKeyShortcut) -> Bool)?,
-        moveShortcutRegistration: ((HotKeyShortcut) -> Bool)?
+        moveShortcutRegistration: ((HotKeyShortcut) -> Bool)?,
+        callReturnShortcutRegistration: ((HotKeyShortcut) -> Bool)?
     ) {
         if let activeController {
             AuxiliaryWindowPresenter.present(activeController)
@@ -22,6 +23,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let grant = NSButton(title: "Grant Accessibility", target: nil, action: #selector(SettingsActions.requestAccessibility(_:)))
         let shortcutStatus = NSTextField(labelWithString: "Swap shortcut")
         let moveShortcutStatus = NSTextField(labelWithString: "Move focused window")
+        let callReturnStatus = NSTextField(labelWithString: "Call / Return")
         let actions = SettingsActions(
             settings: settings,
             authorization: authorization,
@@ -29,7 +31,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             shortcutStatus: shortcutStatus,
             shortcutRegistration: shortcutRegistration,
             moveShortcutStatus: moveShortcutStatus,
-            moveShortcutRegistration: moveShortcutRegistration
+            moveShortcutRegistration: moveShortcutRegistration,
+            callReturnStatus: callReturnStatus,
+            callReturnShortcutRegistration: callReturnShortcutRegistration
         )
         let recorder = ShortcutRecorderField(shortcut: settings.shortcut) { shortcut in
             actions.replaceShortcut(shortcut)
@@ -39,6 +43,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             actions.replaceMoveShortcut(shortcut)
         }
         moveRecorder.toolTip = "Click this field, then press a modified key combination."
+        let callReturnRecorder = ShortcutRecorderField(shortcut: settings.callReturnShortcut) { shortcut in
+            actions.replaceCallReturnShortcut(shortcut)
+        }
+        callReturnRecorder.toolTip = "Control–Shift–C calls a window; press it again to return. Click to change."
         launch.target = actions
         grant.target = actions
 
@@ -48,12 +56,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let moveShortcutRow = NSStackView(views: [moveShortcutStatus, moveRecorder])
         moveShortcutRow.spacing = 12
         moveShortcutRow.alignment = .centerY
-        let stack = NSStackView(views: [shortcutRow, moveShortcutRow, launch, accessibility, grant])
+        let callReturnRow = NSStackView(views: [callReturnStatus, callReturnRecorder])
+        callReturnRow.spacing = 12
+        callReturnRow.alignment = .centerY
+        let hint = NSTextField(wrappingLabelWithString: "Configure left and middle click in the icon’s right-click menu. Scroll over the icon to change middle click.")
+        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let stack = NSStackView(views: [shortcutRow, moveShortcutRow, callReturnRow, hint, launch, accessibility, grant])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 205))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 295))
         view.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
@@ -76,7 +89,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 }
 
 @MainActor
-private final class SettingsActions: NSObject {
+final class SettingsActions: NSObject {
     let settings: ScreenSwapSettings
     let authorization: any AccessibilityAuthorizing
     let accessibilityStatus: NSTextField
@@ -84,8 +97,10 @@ private final class SettingsActions: NSObject {
     let shortcutRegistration: ((HotKeyShortcut) -> Bool)?
     let moveShortcutStatus: NSTextField
     let moveShortcutRegistration: ((HotKeyShortcut) -> Bool)?
+    let callReturnStatus: NSTextField
+    let callReturnShortcutRegistration: ((HotKeyShortcut) -> Bool)?
 
-    init(settings: ScreenSwapSettings, authorization: any AccessibilityAuthorizing, accessibilityStatus: NSTextField, shortcutStatus: NSTextField, shortcutRegistration: ((HotKeyShortcut) -> Bool)?, moveShortcutStatus: NSTextField, moveShortcutRegistration: ((HotKeyShortcut) -> Bool)?) {
+    init(settings: ScreenSwapSettings, authorization: any AccessibilityAuthorizing, accessibilityStatus: NSTextField, shortcutStatus: NSTextField, shortcutRegistration: ((HotKeyShortcut) -> Bool)?, moveShortcutStatus: NSTextField, moveShortcutRegistration: ((HotKeyShortcut) -> Bool)?, callReturnStatus: NSTextField, callReturnShortcutRegistration: ((HotKeyShortcut) -> Bool)?) {
         self.settings = settings
         self.authorization = authorization
         self.accessibilityStatus = accessibilityStatus
@@ -93,6 +108,8 @@ private final class SettingsActions: NSObject {
         self.shortcutRegistration = shortcutRegistration
         self.moveShortcutStatus = moveShortcutStatus
         self.moveShortcutRegistration = moveShortcutRegistration
+        self.callReturnStatus = callReturnStatus
+        self.callReturnShortcutRegistration = callReturnShortcutRegistration
     }
 
     @objc func requestAccessibility(_ sender: Any?) {
@@ -116,7 +133,7 @@ private final class SettingsActions: NSObject {
             shortcutStatus.stringValue = "Shortcut needs at least one modifier"
             return false
         }
-        guard shortcut != settings.moveShortcut else {
+        guard shortcut != settings.moveShortcut, shortcut != settings.callReturnShortcut else {
             shortcutStatus.stringValue = "Choose a different modified shortcut"
             return false
         }
@@ -127,12 +144,28 @@ private final class SettingsActions: NSObject {
             return false
         }
         settings.shortcut = shortcut
-        shortcutStatus.stringValue = "Shortcut"
+        shortcutStatus.stringValue = "Swap shortcut"
+        return true
+    }
+
+    func replaceCallReturnShortcut(_ shortcut: HotKeyShortcut) -> Bool {
+        guard shortcut.modifiers != 0, shortcut != settings.shortcut, shortcut != settings.moveShortcut else {
+            callReturnStatus.stringValue = "Choose a different modified shortcut"
+            return false
+        }
+        let oldShortcut = settings.callReturnShortcut
+        guard callReturnShortcutRegistration?(shortcut) ?? false else {
+            _ = callReturnShortcutRegistration?(oldShortcut)
+            callReturnStatus.stringValue = "Shortcut unavailable — previous shortcut restored"
+            return false
+        }
+        settings.callReturnShortcut = shortcut
+        callReturnStatus.stringValue = "Call / Return"
         return true
     }
 
     func replaceMoveShortcut(_ shortcut: HotKeyShortcut) -> Bool {
-        guard shortcut.modifiers != 0, shortcut != settings.shortcut else {
+        guard shortcut.modifiers != 0, shortcut != settings.shortcut, shortcut != settings.callReturnShortcut else {
             moveShortcutStatus.stringValue = "Choose a different modified shortcut"
             return false
         }

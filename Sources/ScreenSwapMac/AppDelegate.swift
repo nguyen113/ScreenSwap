@@ -27,10 +27,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             moveShortcutRegistration: { [weak self] shortcut in
                 self?.registerMoveShortcut(shortcut) ?? false
+            },
+            callReturnShortcutRegistration: { [weak self] shortcut in
+                self?.registerCallReturnShortcut(shortcut) ?? false
             }
         )
         _ = registerGlobalShortcut(dependencies.settings.shortcut)
         _ = registerMoveShortcut(dependencies.settings.moveShortcut)
+        _ = registerCallReturnShortcut(dependencies.settings.callReturnShortcut)
     }
 
     public func application(_ application: NSApplication, open urls: [URL]) {
@@ -78,6 +82,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerMoveShortcut(_ shortcut: HotKeyShortcut) -> Bool {
         hotKeyService?.registerMove(shortcut) { [weak self] in
             self?.statusBarController?.triggerMoveFocusedWindow()
+        } ?? false
+    }
+
+    private func registerCallReturnShortcut(_ shortcut: HotKeyShortcut) -> Bool {
+        hotKeyService?.registerCallReturn(shortcut) { [weak self] in
+            self?.statusBarController?.triggerCallReturn()
         } ?? false
     }
 }
