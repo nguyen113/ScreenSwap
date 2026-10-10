@@ -29,7 +29,8 @@ struct AppDependencies {
             displays: displayProvider,
             namedDisplays: displayProvider,
             windows: windowService,
-            displaySelection: displayPairSelectionStore
+            displaySelection: displayPairSelectionStore,
+            settings: settings
         )
         let coordinator = SwapCoordinator(
             authorization: authorization,
@@ -41,6 +42,7 @@ struct AppDependencies {
             windowVisibilityRecoverer: windowService,
             selection: selectionStore,
             displaySelection: displayPairSelectionStore,
+            settings: settings,
             performanceRecorder: SwapPerformanceLogger(isEnabled: {
                 #if DEBUG
                 true

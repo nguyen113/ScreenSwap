@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import ScreenSwapCore
 import Testing
 @testable import ScreenSwapMac
@@ -69,10 +70,68 @@ private func callWindow(_ number: UInt32, on display: UInt32 = 3, rank: Int? = 0
 @MainActor
 private func callCoordinator(_ windows: CallWindows, displays: CallDisplays = CallDisplays(),
                              authorization: CallAuthorization = CallAuthorization(),
-                             selection: WindowSelectionStore? = nil, pair: DisplayPairSelectionStore = DisplayPairSelectionStore()) -> SwapCoordinator {
+                             selection: WindowSelectionStore? = nil, pair: DisplayPairSelectionStore = DisplayPairSelectionStore(),
+                             settings: ScreenSwapSettings? = nil) -> SwapCoordinator {
     SwapCoordinator(authorization: authorization, displays: displays, windowProvider: windows,
         windowApplying: windows, windowRestorer: windows, windowVerifier: windows,
-        selection: selection, displaySelection: pair, clock: CallClock())
+        selection: selection, displaySelection: pair, settings: settings, clock: CallClock())
+}
+
+@Test @MainActor
+func callUsesConfiguredPrimaryAndReturnKeepsOriginalRouteAfterPreferenceChanges() async {
+    let suite = "ScreenSwapTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let settings = ScreenSwapSettings(defaults: defaults)
+    settings.preferredPrimaryDisplayID = 3
+    let windows = CallWindows()
+    let source = callWindow(1, on: 90)
+    windows.windows = [source, callWindow(2)]
+    let coordinator = callCoordinator(windows, settings: settings)
+    #expect(await coordinator.callReturnMeasured().outcome == .success(attempted: 1, succeeded: 1))
+    #expect(windows.applied.first?.0.windowID == source.snapshot.id)
+    #expect(windows.applied.first?.0.destinationDisplayID == 3)
+    #expect(windows.applied.first?.0.frame.minX == 1100)
+    settings.preferredPrimaryDisplayID = nil
+    windows.windows = [callWindow(1, on: 3, transaction: "return")]
+    #expect(await coordinator.callReturnMeasured().outcome == .success(attempted: 1, succeeded: 1))
+    #expect(windows.applied.last?.0.destinationDisplayID == 90)
+    #expect(windows.applied.last?.0.frame == source.originalFrame)
+}
+
+@Test @MainActor
+func callSelectsPreferredPrimaryOnThreeDisplaysAndFreezesRoleBeforeCapture() async {
+    let suite = "ScreenSwapTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let settings = ScreenSwapSettings(defaults: defaults)
+    settings.preferredPrimaryDisplayID = 25
+    let displays = CallDisplays()
+    let thirdFrame = CGRect(x: 2000, y: 0, width: 1000, height: 800)
+    displays.values.append(DisplaySnapshot(id: 25, frame: thirdFrame, visibleFrame: thirdFrame))
+    let windows = CallWindows()
+    windows.windows = [callWindow(1), callWindow(2, on: 90, rank: -1)]
+    windows.afterCapture = { settings.preferredPrimaryDisplayID = 90 }
+    let coordinator = callCoordinator(windows, displays: displays, settings: settings)
+    #expect(await coordinator.callReturnMeasured().outcome == .success(attempted: 1, succeeded: 1))
+    // Automatic pair is 25 + stable ID 3; system-primary windows remain untouched.
+    #expect(windows.applied.first?.0.windowID == windows.windows[0].snapshot.id)
+    #expect(windows.applied.first?.0.destinationDisplayID == 25)
+}
+
+@Test @MainActor
+func disconnectedPreferredPrimaryFallsBackWithoutErasingPreference() async {
+    let suite = "ScreenSwapTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let settings = ScreenSwapSettings(defaults: defaults)
+    settings.preferredPrimaryDisplayID = 999
+    let windows = CallWindows()
+    windows.windows = [callWindow(1)]
+    let coordinator = callCoordinator(windows, settings: settings)
+    #expect(await coordinator.callReturnMeasured().outcome == .success(attempted: 1, succeeded: 1))
+    #expect(windows.applied.first?.0.destinationDisplayID == 90)
+    #expect(settings.preferredPrimaryDisplayID == 999)
 }
 
 @Test @MainActor

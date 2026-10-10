@@ -537,6 +537,67 @@ func contextMenuConfiguresClickModesAndProvidesReturnAndCancel() {
 }
 
 @Test @MainActor
+func primaryDisplayMenuUsesCachedInventoryAndIncludesChoiceInPair() {
+    let suite = "ScreenSwapTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let settings = ScreenSwapSettings(defaults: defaults)
+    let displays = [90, 3, 25].enumerated().map { offset, id in
+        let frame = CGRect(x: CGFloat(offset * 1000), y: 0, width: 1000, height: 800)
+        return InventoryDisplay(snapshot: DisplaySnapshot(id: UInt32(id), frame: frame, visibleFrame: frame),
+            ordinal: offset + 1, name: "Monitor \(id)")
+    }
+    let pair = DisplayPairSelectionStore()
+    pair.reconcile(activeDisplays: displays.map(\.snapshot), primaryDisplayID: 90, candidateCounts: [:])
+    let provider = StatusFakeInventory(WindowInventory(displays: displays, windows: [], primaryDisplayID: 90))
+    let controller = StatusItemMenuController(settings: settings, inventoryProvider: provider, displaySelection: pair)
+    var changes = 0
+    controller.modesChanged = { changes += 1 }
+    func primaryMenu() -> NSMenu { controller.menu.items.first { $0.title.hasPrefix("Primary Display:") }!.submenu! }
+    #expect(primaryMenu().items.first?.state == .on)
+    let third = primaryMenu().items.first { $0.title == "3 — Monitor 25" }!
+    controller.perform(third.action!, with: third)
+    #expect(settings.preferredPrimaryDisplayID == 25)
+    #expect(Set(pair.frozenPair()) == [3, 25])
+    #expect(primaryMenu().items.first { $0.title == third.title }?.state == .on)
+    #expect(controller.menu.items.contains { $0.title == "3 — Monitor 25 — Primary" })
+    #expect(provider.currentInventoryCallCount == 1 && changes == 1)
+    controller.applySuccessfulMoves([SuccessfulWindowMove(
+        runtimeKey: RuntimeWindowKey(processIdentifier: 1, quartzWindowNumber: 1), destinationDisplayID: 25)])
+    let automatic = primaryMenu().items.first!
+    controller.perform(automatic.action!, with: automatic)
+    #expect(settings.preferredPrimaryDisplayID == nil)
+    #expect(controller.menu.items.contains { $0.title == "1 — Monitor 90 — Primary" })
+    #expect(provider.currentInventoryCallCount == 1 && changes == 2)
+
+    settings.preferredPrimaryDisplayID = 999
+    controller.rebuildMenu()
+    #expect(controller.menu.items.contains { $0.title == "Primary Display: Follow macOS (preferred unavailable)" })
+    #expect(settings.preferredPrimaryDisplayID == 999)
+    controller.hasPendingReturn = { true }
+    controller.rebuildMenu()
+    #expect(primaryMenu().items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
+    controller.perform(automatic.action!, with: automatic)
+    #expect(settings.preferredPrimaryDisplayID == 999)
+}
+
+@Test @MainActor
+func primaryDisplayMenuDisablesChoicesWithoutPermission() {
+    let suite = "ScreenSwapTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let settings = ScreenSwapSettings(defaults: defaults)
+    settings.preferredPrimaryDisplayID = 25
+    let provider = StatusFakeInventory(.permissionRequired)
+    let controller = StatusItemMenuController(settings: settings, inventoryProvider: provider)
+    let submenu = controller.menu.items.first { $0.title.hasPrefix("Primary Display:") }!.submenu!
+    #expect(submenu.items.count == 1 && submenu.items.first?.isEnabled == false)
+    controller.perform(submenu.items.first!.action!, with: submenu.items.first!)
+    #expect(settings.preferredPrimaryDisplayID == 25)
+    #expect(provider.currentInventoryCallCount == 1)
+}
+
+@Test @MainActor
 func statusItemTrackingRespondsToAppKitHoverSelectors() {
     #expect(StatusBarController.instancesRespond(to: NSSelectorFromString("mouseEntered:")))
     #expect(StatusBarController.instancesRespond(to: NSSelectorFromString("mouseExited:")))

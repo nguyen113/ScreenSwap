@@ -37,6 +37,7 @@ and macOS Spaces is still important before relying on it in a critical setup.
   the menu-bar icon by default, or a menu command.
 - Calls the topmost eligible window from the other selected display to the
   primary display and returns that same window with Control–Shift–C.
+- Lets you choose ScreenSwap’s primary display independently of macOS.
 - Lets you bind Swap, Move, or Call / Return to left and middle click; scroll
   over the icon to cycle the middle-click mode.
 - Preserves proportional placement across displays with different resolutions,
@@ -201,19 +202,32 @@ app if macOS asks you to. Beta updates may require approval again.
    button's mode exchanges their bindings. Scroll over the icon to cycle the
    middle-click binding between the two modes different from left click.
    The icon previews the new middle-click mode until the pointer leaves.
-9. Change any of the three shortcuts in **Settings…**. Shortcuts always invoke
+9. Choose **Primary Display** in the right-click menu to set ScreenSwap’s
+   primary monitor, or choose **Follow macOS** to use the system setting.
+   Selecting a monitor outside the current pair adds it to that pair.
+10. Change any of the three shortcuts in **Settings…**. Shortcuts always invoke
    their named actions, independently of the mouse bindings.
 
-The focused-window and Call / Return commands work independently of the swap checkboxes. It
-moves an eligible window between the two selected displays; windows on other
-displays are left in place. Call / Return requires the system primary display
-and one other display in the selected pair. Call uses proportional placement
-and raises the window; Return restores the saved geometry, clamping it to the
+The focused-window and Call / Return commands work independently of the swap
+checkboxes. Each moves an eligible window between the two selected displays;
+windows on other
+displays are left in place. Call / Return requires ScreenSwap’s configured
+primary display and one other display in the selected pair. Call uses
+proportional placement, brings the owning app forward and raises the exact
+called window above normal desktop windows, including a maximized browser.
+Return brings that window forward and restores the saved geometry, clamping it to the
 source's usable area if the display geometry has changed.
 
+The primary-display preference is saved by display ID and does not change macOS
+display settings or window coordinates. If that display is disconnected,
+ScreenSwap temporarily follows macOS and labels the fallback in the menu.
+Reconnecting the same display ID restores its primary role; ensure it belongs
+to the selected pair before calling a window. Docks can assign a new ID, in
+which case select the monitor again.
+
 While a Return is pending, return the window or choose **Cancel Return — Keep
-Window Here** before using Swap or Move. Cancel forgets the saved Return and
-leaves the window in place. If placement fails, recovery stays available for a
+Window Here** before using Swap or Move or changing the primary display.
+Cancel forgets the saved Return and leaves the window in place. If placement fails, recovery stays available for a
 retry. A closed, hidden, minimized, full-screen or unavailable window, or a
 changed pair/disconnected source, cannot redirect Return to a different window.
 Make the window available and reselect the original pair, or cancel. Return

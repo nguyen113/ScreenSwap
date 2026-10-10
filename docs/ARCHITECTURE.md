@@ -68,9 +68,21 @@ availability and pending-Return restrictions are respected.
 Call / Return uses the same measured transaction pipeline. Capture includes
 Quartz front-to-back order and the original AX frame before normalization.
 Call chooses the topmost eligible runtime window on the other selected display,
-requires the system primary display in the pair, maps into its visible frame,
-and raises the fresh AX handle before verification. It ignores swap checkboxes,
+requires the configured ScreenSwap primary display in the pair, maps into its
+visible frame, and foregrounds the owning app and exact fresh AX window before
+verification. It ignores swap checkboxes,
 as does focused Move. Native full-screen and spanning windows remain excluded.
+
+ScreenSwapSettings persists an optional primary CGDirectDisplayID. nil follows
+macOS. PrimaryDisplaySelection resolves an active preference first, then the
+active system primary, then the lowest active ID. A missing preference remains
+saved for reconnection and the menu labels the temporary fallback. The shared
+settings reach inventory, transaction coordination and diagnostic pair selection.
+The menu updates this role from cached display inventory; choosing a display
+also adds it to the pair without AX discovery or window writes. Changes are
+disabled during a pending Return. The role is frozen before window capture.
+LiveDisplayProvider and status-button geometry still use CGMainDisplayID for
+physical Quartz conversion; the preference never changes coordinate origins.
 
 The coordinator keeps only a runtime key, source/primary display IDs, original
 frame and verification flag between Call and Return. Return recaptures all
@@ -83,6 +95,15 @@ the Return icon; failed Call offers Retry Return / Recover from the menu.
 Verified Return clears the saved state. Swap/Move are blocked until Return or
 Cancel, and Cancel drops state without a window mutation. Recovery is deliberately
 process-local, so quitting forgets it.
+
+Call/Return foregrounding uses a dedicated AccessibilityClient.bringToFront
+operation. The live adapter selects AXMain on the captured window, sets the
+owning application's AXFrontmost (with AppKit activation fallback), selects its
+AXFocusedWindow and finally performs AXRaise. This prevents an active maximized
+window in another app from covering a called window. Focus attributes are best
+effort for apps that do not expose writable attributes; activation and raising
+failures produce a structured visibility failure and retain recovery intent.
+Ordinary swap visibility recovery still uses AXRaise without app activation.
 
 ## Swap transaction
 

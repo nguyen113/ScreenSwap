@@ -917,7 +917,7 @@ public final class AccessibilityWindowService: DisplayPairWindowProviding, Windo
 
     public func raise(windowID: WindowID) -> WindowApplyResult {
         guard let handle = lookup[windowID] else { return WindowApplyResult(succeeded: false, failure: .staleWindow) }
-        do { try client.raise(handle); return .success }
+        do { try client.bringToFront(handle); return .success }
         catch { return WindowApplyResult(succeeded: false, failure: .visibility) }
     }
 

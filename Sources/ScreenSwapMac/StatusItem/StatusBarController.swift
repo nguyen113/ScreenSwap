@@ -209,19 +209,22 @@ public final class LiveStatusItemInventoryProvider: StatusItemInventoryProviding
     private let namedDisplays: (any DisplayInventoryProviding)?
     private let windows: any WindowInventoryProviding
     private let displaySelection: DisplayPairSelectionStore
+    private let settings: ScreenSwapSettings?
 
     public init(
         authorization: any AccessibilityAuthorizing,
         displays: any DisplayProviding,
         namedDisplays: (any DisplayInventoryProviding)? = nil,
         windows: any WindowInventoryProviding,
-        displaySelection: DisplayPairSelectionStore
+        displaySelection: DisplayPairSelectionStore,
+        settings: ScreenSwapSettings? = nil
     ) {
         self.authorization = authorization
         self.displays = displays
         self.namedDisplays = namedDisplays
         self.windows = windows
         self.displaySelection = displaySelection
+        self.settings = settings
     }
 
     public func currentInventory() -> WindowInventory {
@@ -244,8 +247,12 @@ public final class LiveStatusItemInventoryProvider: StatusItemInventoryProviding
                   window.isSelectable || window.isAutomaticallyIncluded else { return }
             counts[displayID, default: 0] += 1
         }
-        let primaryDisplayID = (displays as? any PrimaryDisplayProviding)?.primaryDisplayID()
-            ?? activeDisplays.map(\.id).min()
+        let systemPrimaryDisplayID = (displays as? any PrimaryDisplayProviding)?.primaryDisplayID()
+        let primaryDisplayID = PrimaryDisplaySelection.resolve(
+            preferredDisplayID: settings?.preferredPrimaryDisplayID,
+            systemPrimaryDisplayID: systemPrimaryDisplayID,
+            activeDisplays: activeDisplays
+        )
         if let primaryDisplayID {
             displaySelection.reconcile(
                 activeDisplays: activeDisplays,
@@ -257,7 +264,8 @@ public final class LiveStatusItemInventoryProvider: StatusItemInventoryProviding
             displays: inventoryDisplays,
             windows: rawInventory.windows,
             selectedDisplayIDs: displaySelection.selectedDisplayIDs,
-            primaryDisplayID: primaryDisplayID
+            primaryDisplayID: primaryDisplayID,
+            systemPrimaryDisplayID: systemPrimaryDisplayID
         )
     }
 }
@@ -375,7 +383,8 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
             windows: updatedWindows,
             isAuthorized: cachedInventory.isAuthorized,
             selectedDisplayIDs: cachedInventory.selectedDisplayIDs,
-            primaryDisplayID: cachedInventory.primaryDisplayID
+            primaryDisplayID: cachedInventory.primaryDisplayID,
+            systemPrimaryDisplayID: cachedInventory.systemPrimaryDisplayID
         )
         rebuildMenu()
     }
@@ -395,13 +404,17 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
     }
 
     private func inventoryForCurrentDisplaySelection(_ inventory: WindowInventory) -> WindowInventory {
-        guard let displaySelection else { return inventory }
         return WindowInventory(
             displays: inventory.displays,
             windows: inventory.windows,
             isAuthorized: inventory.isAuthorized,
-            selectedDisplayIDs: Set(displaySelection.frozenPair()),
-            primaryDisplayID: inventory.primaryDisplayID
+            selectedDisplayIDs: displaySelection.map { Set($0.frozenPair()) } ?? inventory.selectedDisplayIDs,
+            primaryDisplayID: PrimaryDisplaySelection.resolve(
+                preferredDisplayID: settings?.preferredPrimaryDisplayID,
+                systemPrimaryDisplayID: inventory.systemPrimaryDisplayID,
+                activeDisplays: inventory.displays.map(\.snapshot)
+            ),
+            systemPrimaryDisplayID: inventory.systemPrimaryDisplayID
         )
     }
 
@@ -458,7 +471,9 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
             let children = inventory.windows(on: display.snapshot.id)
             let keys = Set(children.compactMap { $0.isSelectable ? $0.key : nil })
             let isSelectedDisplay = inventory.isDisplaySelected(display.snapshot.id)
-            let displayItem = NSMenuItem(title: display.label, action: #selector(toggleDisplay(_:)), keyEquivalent: "")
+            let label = settings != nil && display.snapshot.id == inventory.primaryDisplayID
+                ? "\(display.label) — Primary" : display.label
+            let displayItem = NSMenuItem(title: label, action: #selector(toggleDisplay(_:)), keyEquivalent: "")
             displayItem.target = self
             displayItem.representedObject = DisplaySelectionMenuPayload(
                 displayID: display.snapshot.id,
@@ -512,6 +527,7 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
     private func appendUtilityItems(separatorNeeded: Bool) {
         if separatorNeeded { menu.addItem(.separator()) }
         if let settings {
+            appendPrimaryDisplayMenu(settings: settings)
             appendModeMenu(title: "Left Click", selected: settings.primaryMode, primary: true)
             appendModeMenu(title: "Middle Click", selected: settings.secondaryMode, primary: false)
             let hint = NSMenuItem(title: "Scroll over icon to change Middle Click", action: nil, keyEquivalent: "")
@@ -566,6 +582,67 @@ public final class StatusItemMenuController: NSObject, StatusItemMenuPresenting 
         }
         parent.submenu = submenu
         menu.addItem(parent)
+    }
+
+    private func appendPrimaryDisplayMenu(settings: ScreenSwapSettings) {
+        let inventory = cachedInventory.map(inventoryForCurrentDisplaySelection)
+        let displays = inventory.flatMap { $0.isAuthorized ? $0.displays : nil } ?? []
+        let current = displays.first { $0.snapshot.id == inventory?.primaryDisplayID }
+        let unavailable = settings.preferredPrimaryDisplayID.map { id in
+            !displays.contains { $0.snapshot.id == id }
+        } ?? false
+        let title = unavailable && !displays.isEmpty
+            ? "Primary Display: Follow macOS (preferred unavailable)"
+            : "Primary Display: \(current?.label ?? "Follow macOS")"
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        let canChange = !displays.isEmpty && hasPendingReturn?() != true
+        let automatic = NSMenuItem(title: "Follow macOS", action: #selector(changePrimaryDisplay(_:)), keyEquivalent: "")
+        automatic.target = self
+        automatic.state = settings.preferredPrimaryDisplayID == nil ? .on : .off
+        automatic.isEnabled = canChange
+        submenu.addItem(automatic)
+        if !displays.isEmpty { submenu.addItem(.separator()) }
+        for display in displays {
+            let item = NSMenuItem(title: display.label, action: #selector(changePrimaryDisplay(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSNumber(value: display.snapshot.id)
+            item.state = settings.preferredPrimaryDisplayID == display.snapshot.id ? .on : .off
+            item.isEnabled = canChange
+            submenu.addItem(item)
+        }
+        parent.submenu = submenu
+        parent.toolTip = hasPendingReturn?() == true
+            ? "Return or cancel the called window before changing the primary display."
+            : "Choose the destination for Call within ScreenSwap. Your macOS display settings stay unchanged."
+        menu.addItem(parent)
+    }
+
+    @objc private func changePrimaryDisplay(_ sender: NSMenuItem) {
+        guard let settings, let cachedInventory, cachedInventory.isAuthorized,
+              hasPendingReturn?() != true else { return }
+        let preferredID = (sender.representedObject as? NSNumber)?.uint32Value
+        let activeDisplays = cachedInventory.displays.map(\.snapshot)
+        guard preferredID == nil || activeDisplays.contains(where: { $0.id == preferredID }) else { return }
+        settings.preferredPrimaryDisplayID = preferredID
+        // Choosing a primary outside the selected pair brings it into the pair.
+        // This is explicit user selection, never a geometry or window write.
+        if let primaryID = PrimaryDisplaySelection.resolve(
+            preferredDisplayID: preferredID,
+            systemPrimaryDisplayID: cachedInventory.systemPrimaryDisplayID,
+            activeDisplays: activeDisplays
+        ) {
+            let counts = cachedInventory.windows.reduce(into: [UInt32: Int]()) { counts, window in
+                guard let id = window.displayID, !window.isSpanning,
+                      window.isSelectable || window.isAutomaticallyIncluded else { return }
+                counts[id, default: 0] += 1
+            }
+            displaySelection?.select(displayID: primaryID, activeDisplays: activeDisplays,
+                                     primaryDisplayID: primaryID, candidateCounts: counts)
+        }
+        modesChanged?()
+        rebuildMenu()
     }
 
     @objc private func changeMode(_ sender: NSMenuItem) {

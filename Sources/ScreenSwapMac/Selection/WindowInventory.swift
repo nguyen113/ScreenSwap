@@ -61,13 +61,15 @@ public struct WindowInventory: Equatable, Sendable {
     public let isAuthorized: Bool
     public let selectedDisplayIDs: Set<UInt32>
     public let primaryDisplayID: UInt32?
+    public let systemPrimaryDisplayID: UInt32?
 
     public init(
         displays: [InventoryDisplay],
         windows: [InventoryWindow],
         isAuthorized: Bool = true,
         selectedDisplayIDs: Set<UInt32>? = nil,
-        primaryDisplayID: UInt32? = nil
+        primaryDisplayID: UInt32? = nil,
+        systemPrimaryDisplayID: UInt32? = nil
     ) {
         self.displays = displays.sorted { $0.snapshot.id < $1.snapshot.id }
         self.windows = windows
@@ -75,6 +77,7 @@ public struct WindowInventory: Equatable, Sendable {
         let activeIDs = Set(displays.map { $0.snapshot.id })
         self.selectedDisplayIDs = selectedDisplayIDs ?? (activeIDs.count <= 2 ? activeIDs : Set(activeIDs.sorted().prefix(2)))
         self.primaryDisplayID = primaryDisplayID
+        self.systemPrimaryDisplayID = systemPrimaryDisplayID ?? primaryDisplayID
     }
 
     public static let permissionRequired = WindowInventory(displays: [], windows: [], isAuthorized: false)

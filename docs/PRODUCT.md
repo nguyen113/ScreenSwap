@@ -12,16 +12,24 @@ users choose the active pair; other displays remain untouched.
   selected display, independently of swap checkboxes.
   Default shortcut: Control–Option–Shift–S.
 - **Call / Return:** bring the topmost eligible window from the other selected
-  display to the system primary display. Invoke again to restore that same
-  window's saved display and geometry. Default shortcut: Control–Shift–C.
+  display to the ScreenSwap primary display (macOS primary by default).
+  Bring its app forward and show that window above normal desktop windows.
+  Invoke again to restore that same window's saved display and geometry.
+  Default shortcut: Control–Shift–C.
 
 Left click defaults to Swap and middle click to Move. The right-click menu
 configures both bindings. They remain distinct; scrolling over the icon cycles
 middle click between the two remaining modes and previews its icon. Keyboard
 shortcuts are configurable in Settings and stay tied to their named actions.
 
-A pending Return blocks Swap and Move until Return or Cancel. Cancel keeps the
-window where it is and forgets recovery intent. Failed placement retains retry
+The **Primary Display** menu lets users choose a primary monitor for ScreenSwap
+or **Follow macOS**. Choosing an unselected primary adds it to the display pair.
+The choice persists; a disconnected preference temporarily falls back to macOS,
+with an explanation in the menu, and resumes when the same display ID returns.
+macOS display settings are unchanged.
+
+A pending Return blocks Swap, Move and primary-display changes until Return or
+Cancel. Cancel keeps the window where it is and forgets recovery intent. Failed placement retains retry
 state; a missing window, changed pair or disconnected source cannot retarget
 Return. Return state is kept in memory for the current app session.
 
