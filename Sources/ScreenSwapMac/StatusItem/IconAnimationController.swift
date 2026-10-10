@@ -62,6 +62,9 @@ final class IconAnimationController {
     private(set) var assetName = "SwapTemplate"
     private var settledMode: StatusIconMode = .swap
     private var available = true
+    /// Re-evaluate the configured resting icon after playback (or its
+    /// accessibility cancellation), using the current focused window.
+    var onSettled: (() -> Void)?
 
     init(
         setImage: @escaping (String) -> Void,
@@ -111,13 +114,16 @@ final class IconAnimationController {
     func completed(_ mode: StatusIconMode, outcome: SwapOutcome, next: StatusIconMode = .swap) {
         settle(after: outcome, next: next)
         guard case let .success(attempted, succeeded) = outcome,
-              attempted > 0, succeeded == attempted, !reduceMotion() else { return }
+              attempted > 0, succeeded == attempted, !reduceMotion() else {
+            onSettled?()
+            return
+        }
         let token = generation
         playback = Task { @MainActor [weak self] in
             let start = ContinuousClock.now
             for index in 0...12 {
                 guard let self, !Task.isCancelled, generation == token else { return }
-                guard !reduceMotion() else { show(next); return }
+                guard !reduceMotion() else { show(next); onSettled?(); return }
                 display(mode.rawValue + String(format: "Motion%02d", index))
                 if index < 12 {
                     do { try await waitUntil(start.advanced(by: mode.duration * (index + 1) / 12)) }
@@ -126,11 +132,15 @@ final class IconAnimationController {
             }
             guard let self, generation == token else { return }
             show(next)
+            onSettled?()
         }
     }
 
     func accessibilityOptionsChanged() {
-        if reduceMotion() { show(settledMode, available: available) }
+        if reduceMotion() {
+            show(settledMode, available: available)
+            onSettled?()
+        }
     }
 
     private func display(_ name: String) {

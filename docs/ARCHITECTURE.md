@@ -46,9 +46,12 @@ playback and observed for immediate cancellation. Presentation never delays AX
 work. The controller serializes status-item commands so a second hotkey or
 middle-click cannot reset in-flight feedback. The coordinator publishes frozen
 source/destination display geometry only for a successful focused move; the UI
-derives direction from that geometry, never display ordering. No vertical
-glyph is supplied, so vertical moves keep the static Swap icon. After feedback,
-the icon returns to Swap because left-click still invokes Swap.
+derives direction from that geometry, never display ordering. No vertical or
+diagonal motion glyph is supplied, so those moves use static native arrows.
+After feedback, the icon returns to the configured default and recomputes MOVE
+direction from the current focused window. Appearance polling skips in-flight
+transactions and animation playback. A completion/cancellation callback updates
+the resting icon immediately, including after Reduce Motion cancels playback.
 
 Call/Return is deferred in `backlog.yml`. Its editable artwork is retained but
 no command or recovery state is enabled by importing the icon pack.
@@ -104,3 +107,22 @@ the focused key at mouse-down before routing through the same targeted move.
 particular, a non-resizable window keeps its actual captured size; only its
 planner-selected origin is clamped within the destination visible frame. The
 pure mapping engine remains unaware of AX capabilities.
+
+## Default mouse action and icon
+
+`ScreenSwapSettings.defaultClickMode` persists SWAP (the default) or MOVE.
+The context menu changes this setting and immediately updates the status item.
+Left-click invokes the chosen mode; the existing middle-click monitor invokes
+the other mode, retaining focus captured at mouse-down. Explicit command URLs
+and the two global shortcuts keep their named actions.
+
+MOVE continues through the existing focused-runtime-key transaction and ignores
+SWAP checkboxes. A lightweight, permission-gated focus geometry read updates its
+single arrow once per second, on hover, and after a transaction. It does not
+crawl the menu inventory or retain Accessibility handles. `MoveArrowDirection`
+uses Quartz geometry and stable selected display IDs for horizontal, vertical,
+and diagonal directions. SWAP and horizontal MOVE use the imported templates;
+other MOVE directions use static SF Symbols. An unresolved direction uses the
+right-pointing MOVE template; execution still validates eligibility and topology.
+The status item stays icon-only, with actions described in its tooltip and
+Accessibility label.

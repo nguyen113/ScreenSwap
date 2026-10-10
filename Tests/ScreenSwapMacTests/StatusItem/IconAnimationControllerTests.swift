@@ -111,6 +111,65 @@ func newerStatePreventsStaleAnimationFromOverwritingAvailability() async {
     #expect(names == ["SwapTemplate", "MoveLeftDisabledTemplate"])
 }
 
+@Test @MainActor
+func completionRestoresConfiguredMoveModeAndNotifiesOnlyAfterPlayback() async {
+    var names: [String] = []
+    var settled = 0
+    let controller = IconAnimationController(
+        setImage: { names.append($0) }, reduceMotion: { false }, observeAccessibility: false,
+        waitUntil: { _ in }
+    )
+    controller.onSettled = { [weak controller] in
+        settled += 1
+        #expect(controller?.playback == nil)
+        #expect(controller?.assetName == "MoveLeftTemplate")
+    }
+    controller.completed(.swap, outcome: .success(attempted: 1, succeeded: 1), next: .moveLeft)
+    #expect(settled == 0)
+    await controller.playback?.value
+    #expect(settled == 1)
+    #expect(names.last == "MoveLeftTemplate")
+
+    controller.completed(.moveRight, outcome: .success(attempted: 1, succeeded: 1), next: .moveLeft)
+    let oldPlayback = controller.playback
+    controller.show(.swap)
+    await oldPlayback?.value
+    #expect(settled == 1)
+    #expect(controller.assetName == "SwapTemplate")
+}
+
+@Test @MainActor
+func reducedMotionAndNoOpNotifyRestingAppearanceWithoutAnimation() async {
+    var reduced = true
+    var settled = 0
+    let controller = IconAnimationController(
+        setImage: { _ in }, reduceMotion: { reduced }, observeAccessibility: false,
+        waitUntil: { _ in reduced = true }
+    )
+    controller.onSettled = { settled += 1 }
+    controller.completed(.swap, outcome: .success(attempted: 1, succeeded: 1), next: .moveRight)
+    #expect(settled == 1)
+    #expect(controller.assetName == "MoveRightTemplate")
+    #expect(controller.playback == nil)
+    controller.completed(.swap, outcome: .noMoves, next: .moveRight)
+    #expect(settled == 2)
+
+    reduced = false
+    controller.completed(.swap, outcome: .success(attempted: 1, succeeded: 1), next: .moveRight)
+    await controller.playback?.value
+    #expect(settled == 3)
+    #expect(controller.assetName == "MoveRightTemplate")
+
+    reduced = false
+    controller.completed(.swap, outcome: .success(attempted: 1, succeeded: 1), next: .moveRight)
+    let pendingPlayback = controller.playback
+    reduced = true
+    controller.accessibilityOptionsChanged()
+    await pendingPlayback?.value
+    #expect(settled == 4)
+    #expect(controller.assetName == "MoveRightTemplate")
+}
+
 @Test
 func moveGlyphUsesPhysicalGeometryAndAvoidsVerticalArrows() {
     func display(_ id: UInt32, x: CGFloat, y: CGFloat) -> DisplaySnapshot {
