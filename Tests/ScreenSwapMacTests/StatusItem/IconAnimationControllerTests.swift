@@ -45,9 +45,11 @@ func successfulActionPlaysThirteenFramesAtPackTimingAndSettlesOnSwap() async {
         )
         controller.completed(mode, outcome: .success(attempted: 1, succeeded: 1))
         await controller.playback?.value
-        #expect(names == ["SwapTemplate"] + (0...12).map {
+        let expectedFrames: [String] = (0...12).map {
             mode.rawValue + String(format: "Motion%02d", $0)
-        } + ["SwapTemplate"])
+        }
+        let expectedNames: [String] = ["SwapTemplate"] + expectedFrames + ["SwapTemplate"]
+        #expect(names == expectedNames)
         #expect(deadlines.count == 12)
         let elapsed = deadlines.first!.duration(to: deadlines.last!)
         let expected = mode.duration * 11 / 12
