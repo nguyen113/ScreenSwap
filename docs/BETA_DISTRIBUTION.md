@@ -1,12 +1,13 @@
-# Beta distribution
+# Distribution
 
-The current beta is `0.1.0-beta.3` (build `3`), tagged
-`v0.1.0-beta.3`. Tags, releases, and Homebrew tap updates are published
-separately after validation.
+The current release is `1.0.0` (build `4`), tagged `v1.0.0`. Downloads remain
+ad-hoc signed and unnotarized. The `--beta` packaging mode is used for this
+signing path even though the GitHub release is not marked as a prerelease.
+Tags, releases, and Homebrew tap updates are published after validation.
 
-## Current beta path
+## Current ad-hoc distribution path
 
-On macOS, create the local beta artifact with:
+On macOS, create the distribution artifacts with:
 
 ```bash
 Packaging/pack-app.sh --beta
@@ -14,19 +15,19 @@ Packaging/pack-app.sh --beta
 
 The script builds the release executable, constructs `dist/ScreenSwap.app`,
 ad-hoc signs it, verifies its code signature, creates
-`dist/ScreenSwap-0.1.0-beta.3.zip`, and prints the archive's SHA-256. The
-archive name is derived from `Packaging/release-version.txt`. The app bundle's
-`CFBundleShortVersionString` remains the valid macOS version `0.1.0`; do not
-use it to name distribution artifacts.
+`dist/ScreenSwap-1.0.0.zip` and `dist/ScreenSwap-1.0.0.dmg`, and prints both
+SHA-256 hashes. The
+artifact names is derived from `Packaging/release-version.txt`. The app bundle's
+`CFBundleShortVersionString` is `1.0.0` and `CFBundleVersion` is `4`.
 
 An ad-hoc signature is deliberately not a Developer ID signature and does not
 notarize the app. Gatekeeper may block the first launch. Users should follow
 macOS's normal, per-app approval flow in System Settings → Privacy & Security;
 they should not disable Gatekeeper globally. ScreenSwap also needs
-Accessibility permission. As beta versions do not use a stable Developer ID
-identity, an update may occasionally require Accessibility approval again.
+Accessibility permission. Because these downloads do not use a stable
+Developer ID identity, an update may require Accessibility approval again.
 
-`spctl --assess` is intentionally not a beta validation gate: rejection is
+`spctl --assess` is intentionally not an ad-hoc validation gate: rejection is
 expected for an ad-hoc, unnotarized build.
 
 ## Personal Homebrew Cask
@@ -42,7 +43,7 @@ brew install --cask nguyen113/tap/screenswap
 
 ```ruby
 cask "screenswap" do
-  version "0.1.0-beta.3"
+  version "1.0.0"
   sha256 "<FINAL_SHA256>"
 
   url "https://github.com/nguyen113/ScreenSwap/releases/download/v#{version}/ScreenSwap-#{version}.zip"
@@ -60,7 +61,7 @@ cask "screenswap" do
 end
 ```
 
-This beta is not Developer-ID signed or notarized, so macOS may require normal
+This release is not Developer ID signed or notarized, so macOS may require normal
 per-app approval in System Settings → Privacy & Security. Do not disable
 Gatekeeper globally.
 
@@ -72,8 +73,8 @@ Gatekeeper globally.
   `/Applications/ScreenSwap.app` and prefers the local, login-keychain-only
   `ScreenSwap Local Development` identity created by
   `Packaging/create-local-signing-identity.sh`.
-- Beta uses `--beta`, always ad-hoc signs, and creates the versioned ZIP. It
-  needs no Apple Developer Program membership.
+- The ad-hoc path uses `--beta`, always ad-hoc signs, and creates versioned ZIP
+  and DMG downloads. It needs no Apple Developer Program membership.
 - Production uses `--release --signing-identity "Developer ID Application: …"
   --notary-profile NAME`. It requires an installed Developer ID Application
   identity and an existing notarytool keychain profile; no credentials are

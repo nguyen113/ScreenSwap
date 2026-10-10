@@ -12,14 +12,15 @@ public macOS Accessibility and Quartz APIs and keeps its geometry planning in a
 small, deterministic Swift core.
 
 > [!IMPORTANT]
-> ScreenSwap v0.1 does not move native macOS full-screen Spaces. Exit full
-> screen before swapping that application.
+> Native macOS full-screen Spaces are not supported. Exit full screen before
+> using Swap, Move, or Call / Return with that window.
 
-## Project status
+## Version 1.0
 
-ScreenSwap is an early macOS release. It is useful for its supported
-two-display workflow, but physical validation across different displays, apps,
-and macOS Spaces is still important before relying on it in a critical setup.
+[Download ScreenSwap v1.0.0](https://github.com/nguyen113/ScreenSwap/releases/tag/v1.0.0)
+for Apple silicon and Intel Macs. This release adds focused-window Move,
+Call / Return, configurable mouse actions, and a saved primary-display
+preference to the window-swap workflow.
 
 ## Demo
 
@@ -50,65 +51,13 @@ and macOS Spaces is still important before relying on it in a critical setup.
   Accessibility onboarding, optional launch at login, About, and Reduce Motion
   aware action feedback.
 
-## ⚠️ Important limitation: native macOS full-screen windows
+## Supported windows and limitations
 
-ScreenSwap v0.1 does **not** move applications that are using macOS **native
-full-screen mode**.
-
-Native full-screen is the mode where macOS creates a separate Space/virtual
-desktop for the application.
-
-For example:
-
-```text
-Finder → View / Enter Full Screen
-Safari → Enter Full Screen
-Xcode → Enter Full Screen
-```
-
-These windows are intentionally left untouched by ScreenSwap.
-
-### Why?
-
-A native full-screen window is managed by macOS as both a window and a
-dedicated Space.
-
-During development, moving these Spaces indirectly by exiting full screen,
-moving the window, and restoring full screen could leave stale WindowServer
-surfaces on the previous display.
-
-To avoid corrupt-looking desktops, ghost windows, or requiring a
-Finder/Dock/macOS restart, ScreenSwap v0.1 does not modify native full-screen
-Spaces.
-
-### Supported
-
-ScreenSwap supports normal windowed layouts, including:
-
-- Normal windows
-- Multiple windows on the same display
-- Overlapping windows
-- 50:50 tiled windows
-- Quarter-screen tiled windows
-- Windowed/maximized windows
-- Different display sizes and resolutions
-- Selecting individual windows to swap
-- Selecting which two displays to swap when 3+ displays are connected
-
-### Not supported in v0.1
-
-- Native macOS full-screen Spaces
-- Moving a native full-screen application from one display to another
-- Multi-display rotation involving more than two displays in one transaction
-
-To include a full-screen application in a swap:
-
-1. Exit macOS native full-screen mode.
-2. Leave the application as a normal or maximized window.
-3. Run ScreenSwap.
-
-Native full-screen support may be investigated for a future release if it can
-be implemented safely using macOS-supported behavior.
+ScreenSwap supports normal, overlapping, tiled, and maximized windows across
+displays with different sizes and resolutions. Native macOS full-screen
+windows live in separate Spaces and are left untouched; exit full screen to
+include them. Spanning, minimized, transient, non-movable, and unavailable
+windows are also excluded. Each action uses exactly two selected displays.
 
 ## Requirements
 
@@ -122,7 +71,7 @@ Choose one of these three methods. ScreenSwap runs in the menu bar, so it does
 not open a regular application window.
 
 > [!IMPORTANT]
-> The current public beta is ad-hoc signed and is not Apple Developer ID signed
+> The v1.0.0 downloads are ad-hoc signed and are not Apple Developer ID signed
 > or notarized. macOS may block its first launch. If that happens, follow
 > [the per-app approval steps](#allow-screenswap-in-macos-security-settings).
 
@@ -136,13 +85,13 @@ brew trust --cask nguyen113/tap/screenswap
 brew install --cask nguyen113/tap/screenswap
 ```
 
-Homebrew 7 requires the Cask-specific trust step for this personal tap. To
-update an existing installation, run `brew upgrade --cask screenswap`.
+The trust command approves this personal tap’s cask. To update an existing
+installation, run `brew update` followed by `brew upgrade --cask screenswap`.
 
 ### Option 2: Download from GitHub Releases
 
 1. Download the DMG or ZIP from the
-   [ScreenSwap v0.1.0-beta.3 release](https://github.com/nguyen113/ScreenSwap/releases/tag/v0.1.0-beta.3).
+   [ScreenSwap v1.0.0 release](https://github.com/nguyen113/ScreenSwap/releases/tag/v1.0.0).
 2. For a ZIP, open it and move the extracted `ScreenSwap.app` to `/Applications`.
    For a DMG, open it and drag ScreenSwap into Applications.
 3. Open ScreenSwap from Applications.
@@ -165,7 +114,7 @@ permission across local rebuilds. The packaging command installs and launches
 
 ## Allow ScreenSwap in macOS Security Settings
 
-If macOS blocks the public beta, first try opening ScreenSwap from Applications.
+If macOS blocks ScreenSwap, first try opening ScreenSwap from Applications.
 Then open **System Settings → Privacy & Security**, scroll to **Security**, and
 click **Open Anyway** for ScreenSwap. Confirm **Open** and authenticate if macOS
 asks. The button appears after macOS has blocked a launch; it may be needed
@@ -177,65 +126,45 @@ ScreenSwap needs Accessibility permission to move windows belonging to other
 apps. When prompted, open **System Settings → Privacy & Security →
 Accessibility** and enable ScreenSwap. If it is not listed, open ScreenSwap's
 **Settings** from the menu bar and click **Grant Accessibility**. Relaunch the
-app if macOS asks you to. Beta updates may require approval again.
+app if macOS asks you to. Updates may require Accessibility approval again.
 
 ## Use ScreenSwap
 
-1. Launch ScreenSwap and grant Accessibility access when prompted.
-2. With two displays, they are automatically the active swap pair.
-3. With three or more displays, right-click the menu-bar item and select an
-   unchecked display to replace a member of the pair.
-4. Use the `All windows` row or individual window rows to choose which windows
-   move. Window choices are retained while a display is outside the active pair.
-5. With the default click bindings, left-click the menu-bar item or press
-   Control–Shift–S to swap the selected
-   windows between the active pair.
-6. To move only the focused window, middle-click the ScreenSwap menu-bar icon
-   or press Control–Option–Shift–S. You can also focus the window, then
-   right-click ScreenSwap and choose **Move Focused Window to Other Display**.
-7. Press Control–Shift–C or choose **Call Window to Primary Display** to bring
-   the topmost eligible window from the other selected display to the primary.
-   Press the same shortcut again to return that window to its saved display,
-   position and size, even if you have focused or resized another window.
-8. In the right-click menu, choose **Left Click** and **Middle Click** to bind
-   each to Swap, Move Focused Window, or Call / Return. Choosing the other
-   button's mode exchanges their bindings. Scroll over the icon to cycle the
-   middle-click binding between the two modes different from left click.
-   The icon previews the new middle-click mode until the pointer leaves.
-9. Choose **Primary Display** in the right-click menu to set ScreenSwap’s
-   primary monitor, or choose **Follow macOS** to use the system setting.
-   Selecting a monitor outside the current pair adds it to that pair.
-10. Change any of the three shortcuts in **Settings…**. Shortcuts always invoke
-   their named actions, independently of the mouse bindings.
+1. Launch ScreenSwap and grant Accessibility access.
+2. Right-click the menu-bar icon to choose displays and windows. Two displays
+   are selected automatically; with three or more, select an unchecked display
+   to replace one member of the pair. Use each display’s **All windows** row or
+   individual checkboxes to choose windows for Swap.
+3. Left-click the icon or press **Control–Shift–S** to swap selected windows.
 
-The focused-window and Call / Return commands work independently of the swap
-checkboxes. Each moves an eligible window between the two selected displays;
-windows on other
-displays are left in place. Call / Return requires ScreenSwap’s configured
-primary display and one other display in the selected pair. Call uses
-proportional placement, brings the owning app forward and raises the exact
-called window above normal desktop windows, including a maximized browser.
-Return brings that window forward and restores the saved geometry, clamping it to the
-source's usable area if the display geometry has changed.
+### New features: quick guide
 
-The primary-display preference is saved by display ID and does not change macOS
-display settings or window coordinates. If that display is disconnected,
-ScreenSwap temporarily follows macOS and labels the fallback in the menu.
-Reconnecting the same display ID restores its primary role; ensure it belongs
-to the selected pair before calling a window. Docks can assign a new ID, in
-which case select the monitor again.
+| Feature | How to use it |
+| --- | --- |
+| Move focused window | Focus a window, then middle-click the icon or press **Control–Option–Shift–S**. It moves to the other selected display. |
+| Call / Return | Press **Control–Shift–C** to bring the topmost eligible window from the other display onto ScreenSwap’s primary display and bring it forward. Press again to return the same window to its saved display, position, and size. |
+| Choose primary display | Right-click → **Primary Display** → choose a monitor, or **Follow macOS**. Choosing a monitor outside the pair adds it to the pair. The preference survives app restarts and does not change macOS display settings. |
+| Customize mouse actions | Right-click → **Left Click** or **Middle Click** → choose Swap, Move, or Call / Return. Choosing the other button’s action exchanges their bindings. |
+| Cycle middle-click action | Scroll over the icon to cycle between the two actions different from left click. The icon previews the choice until the pointer leaves. |
+| Customize shortcuts / launch at login | Open **Settings…** from the right-click menu. Each shortcut stays tied to its named action, regardless of mouse bindings. |
 
-While a Return is pending, return the window or choose **Cancel Return — Keep
-Window Here** before using Swap or Move or changing the primary display.
-Cancel forgets the saved Return and leaves the window in place. If placement fails, recovery stays available for a
-retry. A closed, hidden, minimized, full-screen or unavailable window, or a
-changed pair/disconnected source, cannot redirect Return to a different window.
-Make the window available and reselect the original pair, or cancel. Return
-state lives in memory and is forgotten when ScreenSwap quits.
+Move and Call / Return work independently of the Swap checkboxes. Call requires
+ScreenSwap’s primary display and one other display in the selected pair.
+Return targets the same window even if you focus another window or resize the
+called window; it clamps the saved frame if the source display’s usable area
+has changed.
 
-Display checkmarks choose *which monitors participate*. The nested window
-checkmarks choose *which windows participate*. A window on an unselected
-display is shown but disabled; it will not be moved.
+While Return is pending, return the window or choose **Cancel Return — Keep
+Window Here** before using Swap, Move, or changing the primary display. Cancel
+leaves the window in place. Failed placement retains **Retry Return / Recover
+Called Window**. Make the window available and reselect the original pair to
+retry; a missing window or disconnected display never redirects Return to
+another window. Quitting ScreenSwap forgets the saved Return.
+
+If the preferred primary display disconnects, ScreenSwap temporarily follows
+macOS and labels the fallback in the menu. Reconnecting the same display ID
+restores its primary role. If a dock assigns a new ID, select the monitor again.
+Display-pair and window choices are retained only for the current app session.
 
 ## Safety and behavior
 
@@ -244,25 +173,10 @@ the first Accessibility write. It rechecks display IDs and geometry before
 mutation, and aborts without moving anything if the display topology changed
 during the operation.
 
-The menu bar uses the Option A window-exchange icon from icon pack v3.1.3.
-The blue Swap artwork is the permanent application icon and appears in About.
-Idle icons stay static; fully successful swaps show 200ms of feedback and
-horizontal focused-window moves show 180ms in their physical direction.
-Call and Return use the supplied connected icons with 220ms feedback.
-The idle icon reflects the configured left-click mode; scroll previews the
-middle-click mode. Move continues to track the focused window's physical destination. Vertical
-and diagonal directions use static native arrows; unavailable routes use the
-neutral right-pointing Move template. Reduce Motion
-skips animation, including when enabled during playback. Permission and
-insufficient-display failures use a dim icon while keeping help and selection
-accessible.
-
-The app intentionally does not implement three-way rotation or general
-N-display routing. Every transaction operates on exactly two selected displays.
-
-macOS does not provide a reliable public API for moving arbitrary foreign-app
-windows between Spaces. ScreenSwap therefore leaves native full-screen Spaces
-untouched in v0.1.
+The menu-bar icon reflects the left-click action. Move shows the focused
+window’s destination direction; Call changes to Return after a successful Call.
+Successful actions show brief feedback, and Reduce Motion disables animation.
+Permission and insufficient-display failures keep help and selection accessible.
 
 ## Report bugs
 
@@ -285,6 +199,7 @@ Run the complete automated suite with:
 
 ```bash
 ./build-test.sh
+git diff --check
 ```
 
 The tests use Swift Testing and fakes for Accessibility and display services;
