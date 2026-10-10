@@ -72,8 +72,10 @@ func moveArrowTracksFocusAndDestinationInQuartzCoordinates() {
 
 @Test
 func moveArrowCannotResolveSpanningThirdDisplayOrDisconnectedDestination() {
-    let displays = (0..<3).map { index in
-        DisplaySnapshot(id: UInt32(index + 1), frame: CGRect(x: index * 500, y: 0, width: 500, height: 500), visibleFrame: CGRect(x: index * 500, y: 0, width: 500, height: 500))
+    let displays: [DisplaySnapshot] = (0..<3).map { (index: Int) -> DisplaySnapshot in
+        let id = UInt32(index + 1)
+        let frame = CGRect(x: CGFloat(index) * 500, y: 0, width: 500, height: 500)
+        return DisplaySnapshot(id: id, frame: frame, visibleFrame: frame)
     }
     #expect(MoveArrowDirection.resolve(activeFrame: CGRect(x: 450, y: 50, width: 100, height: 100), displays: displays, pair: [1, 2]) == nil)
     #expect(MoveArrowDirection.resolve(activeFrame: CGRect(x: 1050, y: 50, width: 100, height: 100), displays: displays, pair: [1, 2]) == nil)
